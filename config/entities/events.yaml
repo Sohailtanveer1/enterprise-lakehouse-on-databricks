@@ -1,0 +1,20 @@
+# events
+#
+# Clickstream events in hourly batches. Highest-volume entity, date-
+# partitioned because it is always queried by date.
+
+active: true
+
+source:
+  system: clickstream
+  format: json
+  path_glob: events/dt=*/*.json.gz
+
+load_type: incremental
+primary_key: [event_id]
+watermark_column: event_time
+order_by: [event_time, _ingest_ts]
+
+scd_type: none
+
+partition_by: [event_date]

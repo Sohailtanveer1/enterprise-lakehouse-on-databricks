@@ -1,0 +1,20 @@
+# returns
+#
+# Return and RMA records. Return rate is measured against the shipment cohort,
+# not the calendar month the return arrived.
+
+active: true
+
+source:
+  system: wms_files
+  format: json
+  path_glob: returns/dt=*/*.json
+
+load_type: incremental
+primary_key: [return_id]
+watermark_column: updated_at
+order_by: [updated_at]
+
+scd_type: none
+
+cluster_by: [return_date]

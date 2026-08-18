@@ -1,0 +1,21 @@
+# order_items
+#
+# Order lines via Debezium. Composite primary key, and the grain of
+# fact_sales.
+
+active: true
+
+source:
+  system: erp_postgres
+  format: parquet
+  path_glob: erp/order_items/dt=*/*.parquet
+  debezium_envelope: true
+
+load_type: cdc
+primary_key: [order_id, order_line_number]
+watermark_column: updated_at
+order_by: [source_lsn, _ingest_ts, _record_hash]
+
+scd_type: none
+
+cluster_by: [order_id]

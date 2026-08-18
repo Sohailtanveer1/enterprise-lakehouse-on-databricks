@@ -1,0 +1,11 @@
+# Local Spark in the spark-dev container. No Unity Catalog, no cloud.
+# Development and tests run here so Databricks quota is not spent on iteration.
+catalog: local
+use_unity_catalog: false
+local_warehouse: /work/local_lake/warehouse
+landing_root: /work/local_lake/landing
+checkpoint_root: /work/local_lake/_checkpoints
+schema_root: /work/local_lake/_schemas
+dq_fail_threshold: 0.80
+dq_warn_threshold: 0.95
+max_parallel_entities: 2

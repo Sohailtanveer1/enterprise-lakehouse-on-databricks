@@ -1,0 +1,20 @@
+# promotions
+#
+# Promotion master. SCD1 because start_date and end_date are attributes of the
+# promotion, not versions of it.
+
+active: true
+
+source:
+  system: shopfront_api
+  format: json
+  path_glob: promotions/dt=*/*.json
+
+load_type: incremental
+primary_key: [promotion_id]
+watermark_column: updated_at
+order_by: [updated_at]
+
+scd_type: scd1
+
+cluster_by: [promotion_id]

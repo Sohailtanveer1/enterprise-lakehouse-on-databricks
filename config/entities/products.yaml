@@ -1,0 +1,23 @@
+# products
+#
+# Daily full snapshot from the PIM. SCD2 on price so historical orders keep
+# the price that applied when they were placed.
+
+active: true
+
+source:
+  system: pim_sftp
+  format: csv
+  path_glob: products/dt=*/*.csv
+  options:
+    header: "true"
+    delimiter: ","
+
+load_type: full
+primary_key: [product_id]
+order_by: [updated_at]
+
+scd_type: scd2
+scd2_tracked_columns: [price, category_id, status]
+
+cluster_by: [product_id]

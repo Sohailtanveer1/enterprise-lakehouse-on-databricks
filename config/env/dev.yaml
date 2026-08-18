@@ -1,0 +1,10 @@
+# Environment config. NORTHPEAK_LANDING_ROOT is the single Spike-1 switch:
+#   PASS -> gs://<bucket>/landing      FAIL -> /Volumes/<catalog>/landing/files
+# Thresholds tighten toward prod: dev tolerates messy data, prod does not.
+catalog: northpeak_dev
+landing_root: ${NORTHPEAK_LANDING_ROOT}
+checkpoint_root: ${NORTHPEAK_LANDING_ROOT}/_checkpoints/dev
+schema_root: ${NORTHPEAK_LANDING_ROOT}/_schemas/dev
+dq_fail_threshold: 0.70
+dq_warn_threshold: 0.90
+max_parallel_entities: 4

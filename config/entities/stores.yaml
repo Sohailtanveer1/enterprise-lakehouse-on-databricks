@@ -1,0 +1,20 @@
+# stores
+#
+# Store and distribution-centre reference. SCD2 on region so a re-districted
+# store does not restate historical fulfilment attribution.
+
+active: true
+
+source:
+  system: reference_seed
+  format: csv
+  path_glob: stores/*.csv
+  options:
+    header: "true"
+
+load_type: full
+primary_key: [store_id]
+order_by: [store_id]
+
+scd_type: scd2
+scd2_tracked_columns: [region, is_active]

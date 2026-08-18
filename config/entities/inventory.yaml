@@ -1,0 +1,22 @@
+# inventory
+#
+# Daily inventory snapshot. Partitioned by snapshot_date because snapshot
+# semantics mean whole-partition reads and writes per day.
+
+active: true
+
+source:
+  system: wms_files
+  format: csv
+  path_glob: inventory/dt=*/*.csv
+  options:
+    header: "true"
+
+load_type: incremental
+primary_key: [snapshot_date, product_id, location_id]
+watermark_column: updated_at
+order_by: [updated_at]
+
+scd_type: none
+
+partition_by: [snapshot_date]

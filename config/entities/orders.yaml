@@ -1,0 +1,22 @@
+# orders
+#
+# Order headers via Debezium WAL capture. Ordered by source_lsn - the
+# database's own total order over commits - not by updated_at, which suffers
+# clock skew and shared timestamps on bulk updates.
+
+active: true
+
+source:
+  system: erp_postgres
+  format: parquet
+  path_glob: erp/orders/dt=*/*.parquet
+  debezium_envelope: true
+
+load_type: cdc
+primary_key: [order_id]
+watermark_column: updated_at
+order_by: [source_lsn, _ingest_ts, _record_hash]
+
+scd_type: none
+
+cluster_by: [order_date, customer_id]

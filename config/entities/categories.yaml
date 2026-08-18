@@ -1,0 +1,18 @@
+# categories
+#
+# Category reference. Low churn and no analytical value in history.
+
+active: true
+
+source:
+  system: pim_sftp
+  format: csv
+  path_glob: categories/dt=*/*.csv
+  options:
+    header: "true"
+
+load_type: full
+primary_key: [category_id]
+order_by: [updated_at]
+
+scd_type: scd1

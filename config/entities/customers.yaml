@@ -1,0 +1,25 @@
+# customers
+#
+# Customer master from the Shopfront Commerce API. SCD2 on location and
+# segment because history changes the answer to 'revenue by region'; SCD1 on
+# contact details, which carry no analytical history. phone and address_line1
+# are excluded entirely - P0 PII with no analytical use case.
+
+active: true
+
+source:
+  system: shopfront_api
+  format: json
+  path_glob: customers/dt=*/*.json
+
+load_type: incremental
+primary_key: [customer_id]
+watermark_column: updated_at
+order_by: [updated_at, _ingest_ts]
+
+scd_type: scd2
+scd2_tracked_columns: [city, state, region, customer_segment]
+
+cluster_by: [customer_id]
+
+exclude_columns: [phone, address_line1]

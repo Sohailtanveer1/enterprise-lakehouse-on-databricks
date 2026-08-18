@@ -1,0 +1,21 @@
+# payments
+#
+# Payment attempts via Debezium. Multiple attempts per order are normal and
+# are preserved, not collapsed - payment success rate depends on them.
+
+active: true
+
+source:
+  system: erp_postgres
+  format: parquet
+  path_glob: erp/payments/dt=*/*.parquet
+  debezium_envelope: true
+
+load_type: cdc
+primary_key: [payment_id]
+watermark_column: updated_at
+order_by: [source_lsn, _ingest_ts, _record_hash]
+
+scd_type: none
+
+cluster_by: [order_id]
