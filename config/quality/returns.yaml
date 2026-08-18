@@ -1,0 +1,42 @@
+# Data quality rules: returns
+#
+# severity: warn = flag and pass | error = quarantine the row |
+#           fatal = stop the task, publish nothing
+
+entity: returns
+
+rules:
+  - name: pk_not_null
+    type: not_null
+    severity: fatal
+    columns: [return_id]
+
+  - name: pk_unique
+    type: unique
+    severity: fatal
+    columns: [return_id]
+
+  - name: order_exists
+    type: referential
+    severity: error
+    columns: [order_id]
+    reference_table: orders
+    reference_column: order_id
+
+  - name: quantity_positive
+    type: range
+    severity: error
+    columns: [quantity]
+    min_value: 1
+
+  - name: reason_domain
+    type: domain
+    severity: warn
+    columns: [return_reason]
+    allowed_values: [DAMAGED, WRONG_ITEM, NOT_AS_DESCRIBED, CHANGED_MIND, SIZE_ISSUE]
+
+  - name: refund_non_negative
+    type: range
+    severity: error
+    columns: [refund_amount]
+    min_value: 0

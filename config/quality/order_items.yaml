@@ -1,0 +1,56 @@
+# Data quality rules: order_items
+#
+# severity: warn = flag and pass | error = quarantine the row |
+#           fatal = stop the task, publish nothing
+#
+# discount_within_gross is the cross-field rule. Each column passes
+# its own range check while the combination is nonsense - which is why
+# single-column rules alone are not enough.
+
+entity: order_items
+
+rules:
+  - name: pk_not_null
+    type: not_null
+    severity: fatal
+    columns: [order_id, order_line_number]
+
+  - name: pk_unique
+    type: unique
+    severity: fatal
+    columns: [order_id, order_line_number]
+
+  - name: order_exists
+    type: referential
+    severity: error
+    columns: [order_id]
+    reference_table: orders
+    reference_column: order_id
+
+  - name: quantity_positive
+    type: range
+    severity: error
+    columns: [quantity]
+    min_value: 1
+    max_value: 1000
+
+  - name: unit_price_non_negative
+    type: range
+    severity: error
+    columns: [unit_price]
+    min_value: 0
+
+  - name: tax_non_negative
+    type: range
+    severity: error
+    columns: [tax_amount]
+    min_value: 0
+
+  - name: discount_within_gross
+    type: expression
+    severity: error
+    expression: "discount_amount <= unit_price * quantity"
+
+  - name: volume
+    type: volume
+    severity: fatal

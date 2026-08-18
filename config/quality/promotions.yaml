@@ -1,0 +1,28 @@
+# Data quality rules: promotions
+#
+# severity: warn = flag and pass | error = quarantine the row |
+#           fatal = stop the task, publish nothing
+
+entity: promotions
+
+rules:
+  - name: pk_not_null
+    type: not_null
+    severity: fatal
+    columns: [promotion_id]
+
+  - name: pk_unique
+    type: unique
+    severity: fatal
+    columns: [promotion_id]
+
+  - name: dates_ordered
+    type: expression
+    severity: error
+    expression: "end_date >= start_date"
+
+  - name: discount_non_negative
+    type: range
+    severity: error
+    columns: [discount_value]
+    min_value: 0

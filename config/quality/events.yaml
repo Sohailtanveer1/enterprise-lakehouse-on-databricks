@@ -1,0 +1,47 @@
+# Data quality rules: events
+#
+# severity: warn = flag and pass | error = quarantine the row |
+#           fatal = stop the task, publish nothing
+#
+# Anonymous sessions legitimately have a null customer_id (~35% of
+# traffic), so there is deliberately no not_null rule on it. Treating
+# that as a defect would quarantine a third of the funnel.
+
+entity: events
+
+rules:
+  - name: pk_not_null
+    type: not_null
+    severity: fatal
+    columns: [event_id]
+
+  - name: pk_unique
+    type: unique
+    severity: fatal
+    columns: [event_id]
+
+  - name: event_type_domain
+    type: domain
+    severity: error
+    columns: [event_type]
+    allowed_values: [product_view, cart_add, cart_remove, checkout_started, order_created, payment_completed, shipment_created]
+
+  - name: channel_domain
+    type: domain
+    severity: warn
+    columns: [channel]
+    allowed_values: [WEB, MOBILE_APP, MARKETPLACE]
+
+  - name: event_time_not_future
+    type: expression
+    severity: error
+    expression: "event_time <= current_timestamp() + INTERVAL 1 HOUR"
+
+  - name: pii_leak_scan
+    type: pii_scan
+    severity: error
+    columns: [properties]
+
+  - name: volume
+    type: volume
+    severity: fatal

@@ -1,0 +1,52 @@
+# Data quality rules: customers
+#
+# severity: warn = flag and pass | error = quarantine the row |
+#           fatal = stop the task, publish nothing
+#
+# customer_segment nulls are a WARN, not an error: a missing segment
+# does not invalidate an order. Missing customer_id does, so it is FATAL.
+
+entity: customers
+
+rules:
+  - name: pk_not_null
+    type: not_null
+    severity: fatal
+    columns: [customer_id]
+
+  - name: pk_unique
+    type: unique
+    severity: fatal
+    columns: [customer_id]
+
+  - name: segment_domain
+    type: domain
+    severity: warn
+    columns: [customer_segment]
+    allowed_values: [RETAIL, PREMIUM, WHOLESALE]
+
+  - name: state_format
+    type: regex
+    severity: warn
+    columns: [state]
+    pattern: "^[A-Z]{2}$"
+
+  - name: email_present
+    type: not_null
+    severity: error
+    columns: [email]
+
+  - name: signup_not_future
+    type: expression
+    severity: error
+    expression: "signup_date <= current_date()"
+
+  - name: freshness
+    type: freshness
+    severity: warn
+    columns: [updated_at]
+    max_age_hours: 26
+
+  - name: volume
+    type: volume
+    severity: fatal

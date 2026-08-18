@@ -1,0 +1,23 @@
+# Data quality rules: stores
+#
+# severity: warn = flag and pass | error = quarantine the row |
+#           fatal = stop the task, publish nothing
+
+entity: stores
+
+rules:
+  - name: pk_not_null
+    type: not_null
+    severity: fatal
+    columns: [store_id]
+
+  - name: pk_unique
+    type: unique
+    severity: fatal
+    columns: [store_id]
+
+  - name: region_domain
+    type: domain
+    severity: error
+    columns: [region]
+    allowed_values: [WEST, MIDWEST, SOUTH, NORTHEAST]

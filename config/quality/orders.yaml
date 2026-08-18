@@ -1,0 +1,64 @@
+# Data quality rules: orders
+#
+# severity: warn = flag and pass | error = quarantine the row |
+#           fatal = stop the task, publish nothing
+#
+# customer_exists is ERROR, not FATAL: an orphan FK becomes an inferred
+# dimension member rather than stopping the load. See DATA_MODEL.md §4.
+
+entity: orders
+
+rules:
+  - name: pk_not_null
+    type: not_null
+    severity: fatal
+    columns: [order_id]
+
+  - name: pk_unique
+    type: unique
+    severity: fatal
+    columns: [order_id]
+
+  - name: customer_present
+    type: not_null
+    severity: error
+    columns: [customer_id]
+
+  - name: customer_exists
+    type: referential
+    severity: error
+    columns: [customer_id]
+    reference_table: customers
+    reference_column: customer_id
+
+  - name: status_domain
+    type: domain
+    severity: error
+    columns: [order_status]
+    allowed_values: [PLACED, CONFIRMED, SHIPPED, DELIVERED, CANCELLED, RETURNED]
+
+  - name: payment_status_domain
+    type: domain
+    severity: error
+    columns: [payment_status]
+    allowed_values: [PENDING, AUTHORIZED, CAPTURED, FAILED, REFUNDED]
+
+  - name: region_present
+    type: not_null
+    severity: warn
+    columns: [region]
+
+  - name: order_date_not_future
+    type: expression
+    severity: error
+    expression: "order_date <= current_timestamp()"
+
+  - name: freshness
+    type: freshness
+    severity: warn
+    columns: [updated_at]
+    max_age_hours: 26
+
+  - name: volume
+    type: volume
+    severity: fatal

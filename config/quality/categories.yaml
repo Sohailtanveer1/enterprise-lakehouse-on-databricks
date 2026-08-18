@@ -1,0 +1,17 @@
+# Data quality rules: categories
+#
+# severity: warn = flag and pass | error = quarantine the row |
+#           fatal = stop the task, publish nothing
+
+entity: categories
+
+rules:
+  - name: pk_not_null
+    type: not_null
+    severity: fatal
+    columns: [category_id]
+
+  - name: pk_unique
+    type: unique
+    severity: fatal
+    columns: [category_id]

@@ -1,0 +1,29 @@
+# Data quality rules: payments
+#
+# severity: warn = flag and pass | error = quarantine the row |
+#           fatal = stop the task, publish nothing
+
+entity: payments
+
+rules:
+  - name: pk_not_null
+    type: not_null
+    severity: fatal
+    columns: [payment_id]
+
+  - name: pk_unique
+    type: unique
+    severity: fatal
+    columns: [payment_id]
+
+  - name: amount_non_negative
+    type: range
+    severity: error
+    columns: [payment_amount]
+    min_value: 0
+
+  - name: status_domain
+    type: domain
+    severity: error
+    columns: [payment_status]
+    allowed_values: [PENDING, AUTHORIZED, CAPTURED, FAILED, REFUNDED]

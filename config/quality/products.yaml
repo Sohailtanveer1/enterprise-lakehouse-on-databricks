@@ -1,0 +1,47 @@
+# Data quality rules: products
+#
+# severity: warn = flag and pass | error = quarantine the row |
+#           fatal = stop the task, publish nothing
+
+entity: products
+
+rules:
+  - name: pk_not_null
+    type: not_null
+    severity: fatal
+    columns: [product_id]
+
+  - name: pk_unique
+    type: unique
+    severity: fatal
+    columns: [product_id]
+
+  - name: price_non_negative
+    type: range
+    severity: error
+    columns: [price]
+    min_value: 0
+
+  - name: cost_non_negative
+    type: range
+    severity: error
+    columns: [cost]
+    min_value: 0
+
+  - name: margin_sane
+    type: expression
+    severity: warn
+    expression: "price >= cost"
+
+  - name: status_domain
+    type: domain
+    severity: warn
+    columns: [status]
+    allowed_values: [ACTIVE, DISCONTINUED, PENDING]
+
+  - name: category_exists
+    type: referential
+    severity: error
+    columns: [category_id]
+    reference_table: categories
+    reference_column: category_id

@@ -1,0 +1,29 @@
+# Data quality rules: shipments
+#
+# severity: warn = flag and pass | error = quarantine the row |
+#           fatal = stop the task, publish nothing
+
+entity: shipments
+
+rules:
+  - name: pk_not_null
+    type: not_null
+    severity: fatal
+    columns: [shipment_id]
+
+  - name: pk_unique
+    type: unique
+    severity: fatal
+    columns: [shipment_id]
+
+  - name: order_exists
+    type: referential
+    severity: error
+    columns: [order_id]
+    reference_table: orders
+    reference_column: order_id
+
+  - name: delivery_after_ship
+    type: expression
+    severity: error
+    expression: "delivered_at IS NULL OR delivered_at >= shipped_at"

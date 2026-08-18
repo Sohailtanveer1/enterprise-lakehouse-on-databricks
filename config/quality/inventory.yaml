@@ -1,0 +1,34 @@
+# Data quality rules: inventory
+#
+# severity: warn = flag and pass | error = quarantine the row |
+#           fatal = stop the task, publish nothing
+
+entity: inventory
+
+rules:
+  - name: pk_not_null
+    type: not_null
+    severity: fatal
+    columns: [snapshot_date, product_id, location_id]
+
+  - name: pk_unique
+    type: unique
+    severity: fatal
+    columns: [snapshot_date, product_id, location_id]
+
+  - name: on_hand_non_negative
+    type: range
+    severity: error
+    columns: [quantity_on_hand]
+    min_value: 0
+
+  - name: available_consistent
+    type: expression
+    severity: error
+    expression: "quantity_available = quantity_on_hand - quantity_reserved"
+
+  - name: freshness
+    type: freshness
+    severity: error
+    columns: [updated_at]
+    max_age_hours: 30
