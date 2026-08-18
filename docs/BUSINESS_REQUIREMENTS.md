@@ -1,8 +1,8 @@
 # Business Requirements
 
-**Project:** Enterprise E-Commerce Lakehouse & Real-Time Analytics Platform
+**Project:** Enterprise E-Commerce Lakehouse — **batch only**
 **Phase:** 1 — Architecture (design only)
-**Status:** Draft for build
+**Revision:** R2 — streaming removed, Docker source estate adopted
 
 ---
 
@@ -53,12 +53,15 @@ every department reads from.**
 | VP Merchandising | Product and category performance, promotion impact | Daily |
 | Head of Supply Chain | Inventory availability, stockout risk, fulfilment time | Daily, intra-day preferred |
 | CMO / Growth | Acquisition, retention, conversion, segment behaviour | Daily |
-| Ops / Trading floor | Live order and revenue rate during peak events | **Near real-time (< 5 min)** |
+| Ops / Trading floor | Daily trading position against the trailing trend | Daily, by 07:00 |
 | Customer Service | Return rate and reasons | Daily |
 | Data Governance | PII controlled, access auditable, lineage visible | Continuous |
 
-The split between "correct daily" and "fast now" is the reason this platform has **both** a batch
-path and a streaming path. That is a business requirement, not a technology preference.
+Every stakeholder here is served by a **daily batch** cycle. No requirement in this table needs
+sub-daily latency, which is why R2 removes the streaming path entirely rather than carrying it as
+decoration. Where NorthPeak would genuinely need a live trading view, the design note is in
+`ARCHITECTURE.md` §1 — and the streaming implementation of that pattern already exists in the
+sibling `real-time-analytics-on-gcp` project.
 
 ---
 
@@ -78,10 +81,10 @@ the contract that `DATA_MODEL.md` must satisfy.
 | 7 | Inventory availability | `fact_inventory_snapshot` | product × location × day | product, store, date | Daily by 06:00 |
 | 8 | Frequently out-of-stock products | `fact_inventory_snapshot` | product × location × day | product, store, date | Daily by 06:00 |
 | 9 | Customer acquisition and retention | `agg_customer_cohort` | customer × cohort month | date, segment, region | Daily by 07:30 |
-| 10 | Conversion rate | `fact_customer_events` + `fact_sales` | event / order line | date, channel, device | Daily + streaming |
+| 10 | Conversion rate | `fact_customer_events` + `fact_sales` | event / order line | date, channel, device | Daily by 07:30 |
 | 11 | Order fulfilment time | `fact_order_fulfillment` | order | date, store, region | Daily by 07:00 |
 | 12 | Promotion impact | `fact_sales` | order line | promotion, date, product | Daily by 07:00 |
-| 13 | Real-time vs historical sales | `rt_sales_by_minute` vs `agg_daily_sales` | minute / day | date, region | **< 5 min** |
+| 13 | Latest completed day vs trailing 28-day trend | `agg_daily_sales` | date × region | date, region | Daily by 07:00 |
 
 ### Metric definitions (agreed, non-negotiable)
 
@@ -111,7 +114,7 @@ fixed here and implemented once, in Gold.
 
 | ID | Requirement |
 |---|---|
-| FR-01 | Ingest from 5 heterogeneous source systems: REST API, SFTP/file drop, relational CDC extracts, warehouse file feeds, and a streaming event bus |
+| FR-01 | Ingest from 5 heterogeneous source systems: REST API, SFTP/file drop, relational CDC via Debezium, warehouse file feeds, and clickstream event files |
 | FR-02 | Preserve raw source payloads immutably and replayably in Bronze |
 | FR-03 | Support full-load, incremental-by-watermark, and CDC (insert/update/delete) load patterns from one configurable framework |
 | FR-04 | Detect and process only new files, without reprocessing or missing any |
@@ -120,9 +123,9 @@ fixed here and implemented once, in Gold.
 | FR-07 | Maintain full history for Customer, Product and Store dimensions (SCD Type 2) |
 | FR-08 | Apply latest-value-only semantics where history has no business value (SCD Type 1) |
 | FR-09 | Propagate hard deletes from source through to the analytical model |
-| FR-10 | Handle late-arriving and out-of-order records in both batch and streaming |
+| FR-10 | Handle late-arriving and out-of-order records, ordering CDC by log sequence number rather than application timestamp |
 | FR-11 | Publish a conformed star schema serving all 13 business questions |
-| FR-12 | Publish real-time metrics with under 5 minutes end-to-end latency |
+| FR-12 | Run and test the full Bronze → Silver → Gold pipeline locally on real Spark, with no cloud dependency |
 | FR-13 | Reconcile record counts and monetary totals from source to Gold on every run |
 | FR-14 | Record every pipeline run with status, row counts, duration and errors |
 | FR-15 | Classify and protect PII; restrict access by role |
@@ -134,8 +137,8 @@ fixed here and implemented once, in Gold.
 ## 6. Scope
 
 ### In scope
-Ingestion, modelling, quality, orchestration, governance, streaming, testing, CI/CD, IaC,
-dashboards, documentation.
+Batch ingestion, modelling, quality, orchestration, governance, testing, CI/CD, IaC, dashboards,
+documentation, and a containerised local source estate with real Debezium CDC.
 
 ### Out of scope (and why)
 | Excluded | Reason |
@@ -160,7 +163,7 @@ The platform is complete when:
 4. A deliberately corrupted source file is quarantined without failing the run, and appears in
    `data_quality_results`.
 5. Reconciliation catches an injected row-loss defect.
-6. Streaming metrics land in under 5 minutes and reconcile against the batch equivalent.
+6. The whole pipeline runs end to end on local Spark in Docker, and the same code runs unchanged on Databricks.
 7. CI blocks a merge that breaks a test.
 8. PII columns are masked for a non-privileged role.
 9. Every design decision has a written rationale and an interview answer.
@@ -175,6 +178,6 @@ The platform is complete when:
 | 5, 9 | FR-07, FR-11 | SCD2 history test |
 | 6 | FR-06, FR-11 | Return-cohort test |
 | 7, 8 | FR-01, FR-11 | Snapshot completeness test |
-| 10, 13 | FR-10, FR-12 | Streaming latency + batch/stream reconciliation test |
+| 10, 13 | FR-10 | Event-to-order attribution test; trailing-trend comparison test |
 | 11 | FR-11 | Accumulating snapshot milestone test |
 | All | FR-13, FR-14 | Reconciliation + audit tables |

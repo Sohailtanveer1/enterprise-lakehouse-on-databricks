@@ -1,6 +1,6 @@
 # Non-Functional Requirements
 
-**Phase:** 1 — design only
+**Phase:** 1 — design only · **Revision:** R2 (batch only, local Docker execution)
 
 These are the requirements that make the difference between a pipeline that runs and a platform
 that can be operated. Each has an ID, a target, and a stated verification method — an NFR without
@@ -14,7 +14,7 @@ a test is an aspiration.
 |---|---|---|---|
 | NFR-FRESH-01 | Batch Gold available each morning | 07:00 UTC, ≥ 95% of days | `pipeline_run_audit` completion time |
 | NFR-FRESH-02 | Inventory Gold available before ops standup | 06:00 UTC | Same |
-| NFR-FRESH-03 | Streaming Gold end-to-end latency | < 5 min p95 | `event_time` → `rt_*` write time delta |
+| NFR-FRESH-03 | Clickstream events available in Gold | Same day, by 07:30 | Audit completion time |
 | NFR-FRESH-04 | Bronze freshness rule | `MAX(updated_at)` within 26 h for daily sources | DQ freshness rule, `FATAL` beyond 48 h |
 
 Freshness is a **data quality rule**, not just a schedule. A job that succeeds while ingesting a
@@ -59,7 +59,7 @@ _record_hash DESC)`, where the final hash term guarantees a total order.
 | NFR-REL-02 | Task retry policy | 2 automatic retries, exponential backoff |
 | NFR-REL-03 | Recovery Point Objective (RPO) | 0 for Bronze — no ingested data is ever lost |
 | NFR-REL-04 | Recovery Time Objective (RTO) | Full Silver + Gold rebuild from Bronze within 4 h at `medium` volume |
-| NFR-REL-05 | Streaming restart | Resumes from checkpoint with no data loss and no duplicates |
+| NFR-REL-05 | Auto Loader restart after failure | Resumes from checkpoint; no file re-read, no file skipped |
 | NFR-REL-06 | Delta retention | 30 days time travel on Silver/Gold; `VACUUM` no more aggressive than 7 days |
 
 **Partial failure policy.** A task failing mid-DAG must not leave downstream consumers reading a
@@ -96,7 +96,7 @@ logic, possibly silently by producing nulls. That is a human decision, not an au
 | NFR-REC-02 | Bronze count − quarantined = Silver count | Every run | FATAL |
 | NFR-REC-03 | Silver net revenue = Gold `fact_sales` net revenue, to the cent | Every run | FATAL |
 | NFR-REC-04 | Silver distinct orders = Gold `fact_order_fulfillment` rows | Every run | FATAL |
-| NFR-REC-05 | Streaming daily revenue vs batch daily revenue | Daily | Alert if > 0.5% variance |
+| NFR-REC-05 | Postgres source totals vs Gold totals, end to end | Daily | FATAL — the generator's control totals are ground truth |
 | NFR-REC-06 | Source `MAX(updated_at)` ≤ Bronze `MAX(updated_at)` | Every run | ERROR |
 
 Monetary reconciliation uses `DECIMAL`, never `DOUBLE`. Floating-point accumulation across
@@ -115,7 +115,7 @@ Phase 13, and these targets are revised against measurement rather than guessed 
 | NFR-PERF-01 | Full daily batch, ingestion → Gold | < 45 min |
 | NFR-PERF-02 | Single entity Bronze ingestion | < 3 min |
 | NFR-PERF-03 | Gold dashboard query p95 | < 10 s on 2X-Small warehouse |
-| NFR-PERF-04 | Streaming micro-batch | < 60 s per trigger |
+| NFR-PERF-04 | Full local test suite in `spark-dev` container | < 5 min |
 | NFR-PERF-05 | Average Delta file size after `OPTIMIZE` | 128 MB – 1 GB |
 | NFR-PERF-06 | Full Silver + Gold rebuild | < 4 h |
 
@@ -132,10 +132,11 @@ guaranteed to be asked, and the honest answer is that several decisions here wou
 | Component | Today | At 10 TB/day | Why it changes |
 |---|---|---|---|
 | Auto Loader | Directory listing | **File notification mode** (Pub/Sub) | Listing a directory with millions of files becomes the bottleneck |
+| CDC transport | Single Kafka broker, batched to files | Multi-broker Kafka, Kafka Connect cluster, schema registry | One broker is a single point of failure and a throughput ceiling |
 | Compute | Serverless small | Dedicated job clusters, Photon, autoscaling | Need control over parallelism and instance types |
 | Bronze partitioning | `_ingest_date` | `_ingest_date` + hour, possibly source-hash sub-partitions | Daily partitions become too large to rewrite |
 | `fact_sales` layout | Liquid clustering | Liquid clustering + Z-order on the hottest predicate; possible date partition | Cluster maintenance cost grows |
-| Dedup | Window function over full batch | Streaming state store with watermark, or Bloom-filter pre-filter | Full-batch windows shuffle everything |
+| Dedup | Window function over full batch | Incremental dedup scoped to the new partition, or a Bloom-filter pre-filter | Full-batch windows shuffle everything |
 | CDC apply | Single `MERGE` | Partition-scoped `MERGE` with pruning predicates, or `MERGE` on liquid-clustered keys | Whole-table `MERGE` rewrites too many files |
 | Orchestration | Lakeflow Jobs, 5 tasks | Airflow or Jobs with wide fan-out, per-entity SLAs | Coordination across systems |
 | Small files | Periodic `OPTIMIZE` | Auto-compaction + optimised writes on by default | Manual optimisation cannot keep up |
@@ -194,6 +195,27 @@ stop being run at all.
 
 ---
 
+## 10a. Local execution (new in R2)
+
+Docker Desktop makes it possible for every line of transformation logic to actually run before it
+reaches Databricks. That is a requirement here, not a convenience.
+
+| ID | Requirement |
+|---|---|
+| NFR-LOCAL-01 | The full Bronze → Silver → Gold pipeline runs end to end in the `spark-dev` container against local Delta tables, with no cloud dependency |
+| NFR-LOCAL-02 | The same `src/northpeak` package runs unchanged locally and on Databricks; only config differs |
+| NFR-LOCAL-03 | `docker compose --profile core up` reproduces the entire source estate from scratch on a clean machine |
+| NFR-LOCAL-04 | Source data is regenerable and deterministic from a fixed seed |
+| NFR-LOCAL-05 | The Debezium CDC path is optional — dropping the `cdc` profile changes no pipeline code |
+| NFR-LOCAL-06 | Total container memory stays under 6 GB with `core + cdc + dev` active |
+| NFR-LOCAL-07 | No test requires a Databricks workspace or network access to Google Cloud |
+
+**Why NFR-LOCAL-05 is stated explicitly:** Debezium on Windows is the highest-risk component in the
+stack. Designing the fallback in from the start — a generator that emits the identical Debezium
+envelope — means a setup problem costs an afternoon, not a redesign.
+
+---
+
 ## 11. Security (summary — full detail in `SECURITY.md`)
 
 | ID | Requirement |
@@ -215,6 +237,7 @@ stop being run at all.
 | Reliability | Deliberate mid-run failure, then restart | 10 |
 | Data quality | Injected defects must appear in `data_quality_results` | 5, 10 |
 | Reconciliation | Injected row-loss defect must be caught | 10 |
+| Local execution | Full pipeline run in `spark-dev`, no cloud | 3–6 |
 | Performance | Benchmark suite, before/after optimisation | 13 |
 | Observability | Ops dashboard populated from real runs | 10 |
 | Maintainability | Add a 12th entity via config only | 13 |

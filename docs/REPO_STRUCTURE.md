@@ -171,9 +171,14 @@ promoting through environments is the point of the exercise.
 
 ## 5. Repository location
 
-Built at `enterprise-databricks-lakehouse/` inside the existing `Sohail-Data-Engg-Portfolio`
-repository, alongside the existing GCP projects.
+**Standalone repository:** `github.com/Sohailtanveer1/enterprise-lakehouse-on-databricks`, checked
+out at `enterprise-lakehouse-on-databricks/` inside the `Sohail-Data-Engg-Portfolio` working
+directory but tracked as its own repo with its own remote.
 
-**Recommendation for Phase 15:** extract this to a **standalone public GitHub repository** before
-sharing. A recruiter following a link should land on this project's README, not on a portfolio
-monorepo they must navigate. The portfolio repo can link out to it.
+This is the right arrangement and it is already in place. A recruiter following a link lands on
+this project's README, not on a portfolio monorepo they must navigate. The portfolio repo should
+carry a link out to it.
+
+> **Housekeeping:** the project folder sits inside the parent portfolio repo's working tree. Add
+> `enterprise-lakehouse-on-databricks/` to the **parent** repo's `.gitignore` so the two repos do
+> not both try to track the same files.

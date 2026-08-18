@@ -1,6 +1,6 @@
 # Data Model
 
-**Phase:** 1 — design only
+**Phase:** 1 — design only · **Revision:** R2 (batch only, Debezium CDC)
 **Satisfies:** all 13 business questions in [`BUSINESS_REQUIREMENTS.md`](BUSINESS_REQUIREMENTS.md) §4
 
 ---
@@ -13,12 +13,16 @@ delivery mechanism, cadence and failure mode, but one engine handles them all.
 
 | # | Source system | Entities | Transport | Format | Cadence | Load pattern |
 |---|---|---|---|---|---|---|
-| S1 | **Shopfront Commerce API** (Cloud Run) | `customers`, `promotions` | REST, paginated, bearer token | JSON | Hourly | Incremental by `updated_since` watermark |
-| S2 | **PIM export** (SFTP drop → GCS) | `products`, `categories` | SFTP → GCS sync | CSV | Daily 02:00 | Full snapshot |
-| S3 | **NorthPeak ERP** (Postgres) | `orders`, `order_items`, `payments` | CDC extract to GCS | Parquet | Every 4 h | CDC (`op` = I/U/D) |
-| S4 | **WMS feeds** | `inventory`, `shipments`, `returns` | File drop → GCS | CSV / JSON | Daily 03:00 | Incremental delta |
-| S5 | **Clickstream** (Pub/Sub) | `events` | Pub/Sub → GCS micro-batch | JSON | Continuous | Streaming append |
+| S1 | **Shopfront Commerce API** — Docker FastAPI | `customers`, `promotions` | REST, paginated, bearer token → GCS | JSON | Hourly | Incremental by `updated_since` watermark |
+| S2 | **PIM export** — Docker SFTP server | `products`, `categories` | SFTP → GCS sync | CSV | Daily 02:00 | Full snapshot |
+| S3 | **NorthPeak ERP** — Docker Postgres 16 | `orders`, `order_items`, `payments` | **Debezium WAL capture → Kafka → Parquet → GCS** | Parquet | Every 4 h | CDC (`op` = c/r/u/d) |
+| S4 | **WMS feeds** — Docker file-gen | `inventory`, `shipments`, `returns` | File drop → GCS | CSV / JSON | Daily 03:00 | Incremental delta |
+| S5 | **Clickstream** — Docker file-gen | `events` | Hourly event files → GCS | JSON | Hourly batches | Append (batch) |
 | S6 | **Reference seed** (Git) | `stores` | Repo file | CSV | On change | Full snapshot |
+
+All five operational systems run as containers on Docker Desktop, standing in for an on-premise
+estate. GCS is the integration boundary between that estate and the lakehouse — see
+`ARCHITECTURE.md` §4.
 
 ### Source contracts
 
@@ -63,10 +67,19 @@ updated_at   TIMESTAMP
 
 **S2 · `categories`** — `category_id` PK, `category_name`, `parent_category_id`, `department`, `updated_at`
 
-**S3 · `orders`** — CDC extract
+**S3 · `orders`** — Debezium change events
+
+Debezium wraps every row in an envelope. Bronze stores the envelope as delivered; Silver unwraps it.
+
 ```
-op            STRING     I | U | D
-op_ts         TIMESTAMP  commit time at source
+ENVELOPE (as landed)
+  op            STRING     c=create · r=snapshot read · u=update · d=delete
+  ts_ms         BIGINT     Debezium capture time
+  before        STRUCT     row image prior to change (null on c/r)
+  after         STRUCT     row image after change (null on d)
+  source        STRUCT     { db, schema, table, lsn, txId, ts_ms, snapshot }
+
+PAYLOAD (after.* — unwrapped in Silver)
 order_id      STRING     PK, ORD-#########
 customer_id   STRING     FK → customers
 order_date    TIMESTAMP  business event time
@@ -77,8 +90,15 @@ store_id      STRING     FK → stores (fulfilment location)
 region        STRING     WEST|MIDWEST|SOUTH|NORTHEAST
 promotion_id  STRING     FK → promotions, nullable
 currency      STRING     always 'USD'
-updated_at    TIMESTAMP  watermark
+updated_at    TIMESTAMP  application timestamp — NOT the ordering key
 ```
+
+> **Order by `source.lsn`, not `updated_at`.** The log sequence number is Postgres's own total
+> order over commits. Application timestamps suffer clock skew, share values across bulk updates,
+> and go stale on backfills. This is the single most important correctness detail in the CDC path.
+
+> A **tombstone** (null-valued message keyed on the primary key) follows every `op=d`. The sink
+> preserves it; Silver treats the pair as one logical delete.
 
 **S3 · `order_items`** — CDC
 ```
@@ -101,7 +121,7 @@ PK = (order_id, order_line_number)
 (DAMAGED|WRONG_ITEM|NOT_AS_DESCRIBED|CHANGED_MIND|SIZE_ISSUE), `quantity`, `return_date`,
 `refund_amount`, `updated_at`
 
-**S5 · `events`** — Pub/Sub JSON
+**S5 · `events`** — hourly clickstream JSON files written by `file-gen`
 ```
 event_id     STRING    idempotency key; duplicates injected deliberately
 event_type   STRING    product_view|cart_add|cart_remove|checkout_started|
@@ -127,14 +147,14 @@ The generator must produce these so the pipeline has something real to catch:
 | Defect | Where | Purpose |
 |---|---|---|
 | Exact duplicate records | all file sources | Dedup logic |
-| Duplicate `event_id` | events | Streaming dedup within watermark |
+| Duplicate `event_id` | events | Batch dedup by window function |
 | Nulls in required fields | orders, order_items | Not-null rules |
 | Negative `quantity`, `unit_price` | order_items | Range rules |
 | `discount_amount > unit_price × quantity` | order_items | Cross-field rules |
 | Invalid `state` codes | customers | Domain rules |
 | Orphan `customer_id` in orders | orders | Referential integrity + inferred members |
 | Out-of-order `event_time` | events | Event-time ordering |
-| Events arriving 5–30 min late | events | Watermark behaviour |
+| Events arriving in a later hourly file than their `event_time` | events | Late-arriving batch record handling |
 | Records late by 2–7 days | orders CDC | Late-arriving fact handling |
 | A new column appearing mid-stream | products, events | Schema evolution |
 | A column *disappearing* | inventory | Schema evolution, harder case |
@@ -165,7 +185,7 @@ representation of each source entity. Gold reshapes it for consumption.
 | `silver.inventory` | `(snapshot_date, product_id, location_id)` | Append, immutable per day | |
 | `silver.shipments` | `shipment_id` | Current state | |
 | `silver.returns` | `return_id` | Current state | |
-| `silver.events` | `event_id` | Append, deduped | Streaming target |
+| `silver.events` | `event_id` | Append, deduped | Batch append target |
 
 **Why SCD2 sits in Silver, not only Gold:** history is a property of the *entity*, not of a
 reporting shape. Building it once in Silver means Gold dimensions and any future consumer share
@@ -414,13 +434,9 @@ dashboard, because it is the single most common inventory reporting error.
 | `agg_customer_cohort` | cohort_month × months_since_signup | Q9 |
 | `agg_product_performance` | date × product | Q3, Q6, Q12 |
 
-### Real-time Gold
-
-| Table | Grain | Latency target |
-|---|---|---|
-| `rt_sales_by_minute` | minute × region | < 5 min |
-| `rt_funnel_by_minute` | minute × event_type × channel | < 5 min |
-| `rt_active_users` | 5-min sliding window | < 5 min |
+> **Removed in R2:** the `rt_sales_by_minute`, `rt_funnel_by_minute` and `rt_active_users`
+> real-time marts. Scope is batch only; business question 13 is now answered by comparing the
+> latest completed day in `agg_daily_sales` against its trailing 28-day trend.
 
 ---
 
@@ -486,7 +502,6 @@ Optimisation is Phase 13; these are the starting choices, to be measured and rev
 | `fact_sales` | Liquid clustering on `(order_date_sk, product_sk)` | Both are high-cardinality filter columns; liquid clustering adapts without a rewrite |
 | `fact_inventory_snapshot` | Partition by `snapshot_date_sk` | Snapshot semantics — full-partition reads and writes per day |
 | `dim_*` | No partitioning | Small; partitioning would only create small files |
-| `rt_*` | Partition by `window_date` | Streaming append, date-scoped queries |
 
 > **Do not partition small tables.** ~45 K products partitioned by category produces 12 files of a
 > few hundred KB each, and the metadata overhead exceeds any pruning benefit. A dimension under
@@ -510,7 +525,7 @@ Optimisation is Phase 13; these are the starting choices, to be measured and rev
 | 10 | Conversion rate | `fact_customer_events` sessions ÷ sessions with `order_created` |
 | 11 | Fulfilment time | `fact_order_fulfillment.hours_to_ship`, `hours_to_deliver` |
 | 12 | Promotion impact | `fact_sales` × `dim_promotion`, promo vs non-promo baseline |
-| 13 | Real-time vs historical | `rt_sales_by_minute` vs `agg_daily_sales` |
+| 13 | Latest day vs trailing trend | `agg_daily_sales` × `dim_date`, 28-day window function |
 
 Every question resolves. No question requires a join path the model does not provide — which is
 the actual test of whether a dimensional model is finished.
