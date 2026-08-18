@@ -54,3 +54,7 @@ data/
 Thumbs.db
 .idea/
 .vscode/
+
+# terraform local state and secrets
+terraform/envs/*.tfvars
+!terraform/envs/*.tfvars.example

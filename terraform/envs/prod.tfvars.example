@@ -1,0 +1,13 @@
+# Copy to prod.tfvars (gitignored) and adjust.
+environment  = "prod"
+catalog_name = "northpeak_prod"
+
+# FALSE on Free Edition. Unity Catalog groups are account-level objects and
+# Free Edition has no account console, so every grant would fail on apply.
+# See terraform/reference-only/ for the account layer.
+create_group_grants = true
+
+# Spike-1 fallback. Harmless if the GCS external location works.
+create_landing_volume = true
+
+databricks_profile = "DEFAULT"
