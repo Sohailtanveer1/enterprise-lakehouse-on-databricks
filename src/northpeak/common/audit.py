@@ -14,14 +14,16 @@ Edition's system table access is limited (PHASE0-FEASIBILITY.md §3). In a paid
 workspace you would join these against `system.billing` and
 `system.access.audit` instead of duplicating them.
 """
+
 from __future__ import annotations
 
 import time
 import traceback
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Iterator
+from datetime import UTC, datetime
+from typing import Any
 
 from pyspark.sql import Row
 
@@ -67,7 +69,7 @@ class RunRecord:
     rows_in: int = 0
     rows_out: int = 0
     rows_rejected: int = 0
-    start_ts: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    start_ts: datetime = field(default_factory=lambda: datetime.now(UTC))
     end_ts: datetime | None = None
     duration_s: float = 0.0
     error_message: str | None = None
@@ -136,11 +138,11 @@ def audited_task(
         record.error_message = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"[:4000]
         raise
     finally:
-        record.end_ts = datetime.now(timezone.utc)
+        record.end_ts = datetime.now(UTC)
         record.duration_s = round(time.time() - started, 3)
         try:
             write_run(env, record)
-        except Exception as audit_exc:  # noqa: BLE001
+        except Exception as audit_exc:
             # Never let an audit-write failure mask the real error.
             log.error(f"audit write failed for {task_name}/{entity}: {audit_exc}")
         log.info(
@@ -151,14 +153,29 @@ def audited_task(
 
 
 def dq_row(
-    entity: str, layer: str, rule_name: str, rule_type: str, severity: str,
-    rows_checked: int, rows_failed: int, passed: bool, detail: str, env_name: str,
+    entity: str,
+    layer: str,
+    rule_name: str,
+    rule_type: str,
+    severity: str,
+    rows_checked: int,
+    rows_failed: int,
+    passed: bool,
+    detail: str,
+    env_name: str,
 ) -> dict[str, Any]:
     return {
-        "run_id": get_run_id(), "entity": entity, "layer": layer,
-        "rule_name": rule_name, "rule_type": rule_type, "severity": severity,
-        "rows_checked": rows_checked, "rows_failed": rows_failed,
+        "run_id": get_run_id(),
+        "entity": entity,
+        "layer": layer,
+        "rule_name": rule_name,
+        "rule_type": rule_type,
+        "severity": severity,
+        "rows_checked": rows_checked,
+        "rows_failed": rows_failed,
         "pass_rate": round(1 - rows_failed / rows_checked, 6) if rows_checked else 1.0,
-        "passed": passed, "detail": detail[:1000],
-        "evaluated_at": datetime.now(timezone.utc), "env": env_name,
+        "passed": passed,
+        "detail": detail[:1000],
+        "evaluated_at": datetime.now(UTC),
+        "env": env_name,
     }

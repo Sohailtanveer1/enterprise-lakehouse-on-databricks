@@ -9,6 +9,7 @@ Joining on is_current attributes a January order to the customer's present
 region, silently restating history every time somebody moves — and the report
 still runs, so nobody notices.
 """
+
 from __future__ import annotations
 
 from pyspark.sql import DataFrame
@@ -46,7 +47,9 @@ def build_dim_date(env: EnvConfig, start: str = "2023-01-01", end: str = "2028-1
     target = env.table("gold", "dim_date")
 
     df = (
-        spark.sql(f"SELECT explode(sequence(to_date('{start}'), to_date('{end}'), interval 1 day)) AS full_date")
+        spark.sql(
+            f"SELECT explode(sequence(to_date('{start}'), to_date('{end}'), interval 1 day)) AS full_date"
+        )
         .withColumn("date_sk", F.date_format("full_date", "yyyyMMdd").cast("int"))
         .withColumn("day_of_week", F.dayofweek("full_date"))
         .withColumn("day_name", F.date_format("full_date", "EEEE"))
@@ -60,11 +63,25 @@ def build_dim_date(env: EnvConfig, start: str = "2023-01-01", end: str = "2028-1
         # Simplified: US federal holidays would need a calendar table. Flagged
         # here rather than silently wrong.
         .withColumn("is_holiday", F.lit(False))
-        .withColumn("fiscal_period", F.concat_ws("-", F.year("full_date"),
-                                                 F.lpad(F.month("full_date"), 2, "0")))
-        .select("date_sk", "full_date", "day_of_week", "day_name", "day_of_month",
-                "week_of_year", "month_number", "month_name", "quarter", "year",
-                "is_weekend", "is_holiday", "fiscal_period")
+        .withColumn(
+            "fiscal_period",
+            F.concat_ws("-", F.year("full_date"), F.lpad(F.month("full_date"), 2, "0")),
+        )
+        .select(
+            "date_sk",
+            "full_date",
+            "day_of_week",
+            "day_name",
+            "day_of_month",
+            "week_of_year",
+            "month_number",
+            "month_name",
+            "quarter",
+            "year",
+            "is_weekend",
+            "is_holiday",
+            "fiscal_period",
+        )
     )
     df.write.format("delta").mode("overwrite").saveAsTable(target)
     count = df.count()
@@ -79,18 +96,20 @@ def conform_dim_product(env: EnvConfig) -> None:
     if not (table_exists(product) and table_exists(category)):
         return
     enriched = (
-        spark.table(product).alias("p")
+        spark.table(product)
+        .alias("p")
         .join(
             spark.table(category).select(
                 F.col("category_id").alias("_ck"), F.col("categories_sk").alias("category_sk")
             ),
-            F.col("p.category_id") == F.col("_ck"), "left",
+            F.col("p.category_id") == F.col("_ck"),
+            "left",
         )
         .drop("_ck")
     )
-    enriched.write.format("delta").mode("overwrite").option(
-        "overwriteSchema", "true"
-    ).saveAsTable(product)
+    enriched.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(
+        product
+    )
 
 
 # -------------------------------------------------------------------- facts
@@ -109,10 +128,16 @@ def build_fact_sales(env: EnvConfig) -> int:
 
     df = items.alias("i").join(
         orders.select(
-            "order_id", "customer_id", "order_date", "order_status",
-            "payment_status", "store_id", "promotion_id",
+            "order_id",
+            "customer_id",
+            "order_date",
+            "order_status",
+            "payment_status",
+            "store_id",
+            "promotion_id",
         ).alias("o"),
-        "order_id", "inner",
+        "order_id",
+        "inner",
     )
 
     df = (
@@ -127,17 +152,24 @@ def build_fact_sales(env: EnvConfig) -> int:
 
     df = _resolve_dimension_keys(env, df, "order_date")
 
-    fact = (
-        df.withColumn(
-            "sales_sk", surrogate_key("order_id", "order_line_number")
-        )
-        .select(
-            "sales_sk", "order_id", "order_line_number", "order_date_sk",
-            "customer_sk", "product_sk", "category_sk", "store_sk", "promotion_sk",
-            "quantity", F.col("unit_price").cast(MONEY).alias("unit_price"),
-            "gross_amount", "discount_amount", "tax_amount", "net_amount",
-            "order_status", "payment_status",
-        )
+    fact = df.withColumn("sales_sk", surrogate_key("order_id", "order_line_number")).select(
+        "sales_sk",
+        "order_id",
+        "order_line_number",
+        "order_date_sk",
+        "customer_sk",
+        "product_sk",
+        "category_sk",
+        "store_sk",
+        "promotion_sk",
+        "quantity",
+        F.col("unit_price").cast(MONEY).alias("unit_price"),
+        "gross_amount",
+        "discount_amount",
+        "tax_amount",
+        "net_amount",
+        "order_status",
+        "payment_status",
     )
     return _write_fact(env, fact, "fact_sales", cluster_by=["order_date_sk", "product_sk"])
 
@@ -161,7 +193,8 @@ def build_fact_order_fulfillment(env: EnvConfig) -> int:
     rollup = items.groupBy("order_id").agg(
         F.count("*").alias("order_line_count"),
         F.sum(_dec("unit_price") * F.col("quantity") - _dec("discount_amount"))
-        .cast(MONEY).alias("order_net_amount"),
+        .cast(MONEY)
+        .alias("order_net_amount"),
     )
 
     df = orders.alias("o").join(rollup, "order_id", "left")
@@ -178,24 +211,39 @@ def build_fact_order_fulfillment(env: EnvConfig) -> int:
 
     df = (
         df.withColumn("placed_at", F.col("order_date").cast("timestamp"))
-        .withColumn("cancelled_at", F.when(
-            F.col("order_status") == "CANCELLED", F.col("_silver_updated_at")
-        ).otherwise(F.lit(None).cast("timestamp")))
-        .withColumn("hours_to_ship", (
-            F.unix_timestamp("shipped_at") - F.unix_timestamp("placed_at")) / 3600)
-        .withColumn("hours_to_deliver", (
-            F.unix_timestamp("delivered_at") - F.unix_timestamp("placed_at")) / 3600)
+        .withColumn(
+            "cancelled_at",
+            F.when(F.col("order_status") == "CANCELLED", F.col("_silver_updated_at")).otherwise(
+                F.lit(None).cast("timestamp")
+            ),
+        )
+        .withColumn(
+            "hours_to_ship", (F.unix_timestamp("shipped_at") - F.unix_timestamp("placed_at")) / 3600
+        )
+        .withColumn(
+            "hours_to_deliver",
+            (F.unix_timestamp("delivered_at") - F.unix_timestamp("placed_at")) / 3600,
+        )
         .withColumn("order_date_sk", date_key("order_date"))
         .withColumn("final_status", F.col("order_status"))
     )
     df = _resolve_dimension_keys(env, df, "order_date", need=("customer", "store"))
 
     fact = df.withColumn("order_fulfillment_sk", surrogate_key("order_id")).select(
-        "order_fulfillment_sk", "order_id", "order_date_sk", "customer_sk", "store_sk",
-        "placed_at", "shipped_at", "delivered_at", "cancelled_at",
+        "order_fulfillment_sk",
+        "order_id",
+        "order_date_sk",
+        "customer_sk",
+        "store_sk",
+        "placed_at",
+        "shipped_at",
+        "delivered_at",
+        "cancelled_at",
         F.col("hours_to_ship").cast("int").alias("hours_to_ship"),
         F.col("hours_to_deliver").cast("int").alias("hours_to_deliver"),
-        "order_line_count", "order_net_amount", "final_status",
+        "order_line_count",
+        "order_net_amount",
+        "final_status",
     )
     return _write_fact(env, fact, "fact_order_fulfillment", cluster_by=["order_date_sk"])
 
@@ -223,12 +271,18 @@ def build_fact_inventory_snapshot(env: EnvConfig) -> int:
     fact = df.withColumn(
         "inventory_sk", surrogate_key("snapshot_date", "product_id", "store_id")
     ).select(
-        "inventory_sk", "snapshot_date_sk", "product_sk", "store_sk",
-        "quantity_on_hand", "quantity_reserved", "quantity_available",
-        "reorder_point", "is_stockout", "is_below_reorder",
+        "inventory_sk",
+        "snapshot_date_sk",
+        "product_sk",
+        "store_sk",
+        "quantity_on_hand",
+        "quantity_reserved",
+        "quantity_available",
+        "reorder_point",
+        "is_stockout",
+        "is_below_reorder",
     )
-    return _write_fact(env, fact, "fact_inventory_snapshot",
-                       partition_by=["snapshot_date_sk"])
+    return _write_fact(env, fact, "fact_inventory_snapshot", partition_by=["snapshot_date_sk"])
 
 
 def build_fact_returns(env: EnvConfig) -> int:
@@ -251,10 +305,16 @@ def build_fact_returns(env: EnvConfig) -> int:
     df = _resolve_dimension_keys(env, df, "return_date", need=("customer", "product"))
 
     fact = df.withColumn("return_sk", surrogate_key("return_id")).select(
-        "return_sk", "return_id", "return_date_sk", "original_order_date_sk",
-        "product_sk", "customer_sk", "quantity_returned",
+        "return_sk",
+        "return_id",
+        "return_date_sk",
+        "original_order_date_sk",
+        "product_sk",
+        "customer_sk",
+        "quantity_returned",
         F.col("refund_amount").cast(MONEY).alias("refund_amount"),
-        "return_reason", "days_to_return",
+        "return_reason",
+        "days_to_return",
     )
     return _write_fact(env, fact, "fact_returns", cluster_by=["return_date_sk"])
 
@@ -270,8 +330,16 @@ def build_fact_customer_events(env: EnvConfig) -> int:
     df = _resolve_dimension_keys(env, df, "event_time", need=("customer", "product"))
 
     fact = df.withColumn("event_sk", surrogate_key("event_id")).select(
-        "event_sk", "event_id", "event_date_sk", "customer_sk", "product_sk",
-        "session_id", "event_time", "event_type", "channel", "device_type",
+        "event_sk",
+        "event_id",
+        "event_date_sk",
+        "customer_sk",
+        "product_sk",
+        "session_id",
+        "event_time",
+        "event_type",
+        "channel",
+        "device_type",
     )
     return _write_fact(env, fact, "fact_customer_events", partition_by=["event_date_sk"])
 
@@ -291,16 +359,22 @@ def build_fact_payment(env: EnvConfig) -> int:
         "order_id", "customer_id", "order_date"
     )
     df = payments.join(orders, "order_id", "left")
-    df = (
-        df.withColumn("payment_date_sk", date_key("paid_at"))
-        .withColumn("is_successful", F.col("payment_status") == "CAPTURED")
+    df = df.withColumn("payment_date_sk", date_key("paid_at")).withColumn(
+        "is_successful", F.col("payment_status") == "CAPTURED"
     )
     df = _resolve_dimension_keys(env, df, "order_date", need=("customer",))
 
     fact = df.withColumn("payment_sk", surrogate_key("payment_id")).select(
-        "payment_sk", "payment_id", "payment_date_sk", "customer_sk", "order_id",
-        "payment_method", F.col("payment_amount").cast(MONEY).alias("payment_amount"),
-        "payment_status", "attempt_number", "is_successful",
+        "payment_sk",
+        "payment_id",
+        "payment_date_sk",
+        "customer_sk",
+        "order_id",
+        "payment_method",
+        F.col("payment_amount").cast(MONEY).alias("payment_amount"),
+        "payment_status",
+        "attempt_number",
+        "is_successful",
     )
     return _write_fact(env, fact, "fact_payment", cluster_by=["payment_date_sk"])
 
@@ -319,7 +393,9 @@ _SCD2_DIMS = {"customer", "product", "store"}
 
 
 def _resolve_dimension_keys(
-    env: EnvConfig, df: DataFrame, event_time_column: str,
+    env: EnvConfig,
+    df: DataFrame,
+    event_time_column: str,
     need: tuple[str, ...] = ("customer", "product", "category", "store", "promotion"),
 ) -> DataFrame:
     """Attach surrogate keys, as-of for SCD2 dimensions.
@@ -347,21 +423,21 @@ def _resolve_dimension_keys(
             out = as_of_join(out, dimension, business_key, event_time_column, target_sk)
         else:
             out = out.join(
-                dimension.select(
-                    F.col(business_key).alias("_bk"), F.col(target_sk)
-                ),
-                out[business_key] == F.col("_bk"), "left",
+                dimension.select(F.col(business_key).alias("_bk"), F.col(target_sk)),
+                out[business_key] == F.col("_bk"),
+                "left",
             ).drop("_bk")
 
-        out = out.withColumn(
-            target_sk, F.coalesce(F.col(target_sk), F.lit(-1).cast("bigint"))
-        )
+        out = out.withColumn(target_sk, F.coalesce(F.col(target_sk), F.lit(-1).cast("bigint")))
     return out
 
 
 def _write_fact(
-    env: EnvConfig, df: DataFrame, name: str,
-    partition_by: list[str] | None = None, cluster_by: list[str] | None = None,
+    env: EnvConfig,
+    df: DataFrame,
+    name: str,
+    partition_by: list[str] | None = None,
+    cluster_by: list[str] | None = None,
 ) -> int:
     """Full overwrite.
 

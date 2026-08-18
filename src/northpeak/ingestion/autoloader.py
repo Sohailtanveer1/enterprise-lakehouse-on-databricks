@@ -18,6 +18,7 @@ file exactly once, and both resume where they stopped. What local cannot test
 is Auto Loader's schema evolution and rescued-data behaviour, which is called
 out in ARCHITECTURE.md §9 and validated on Databricks.
 """
+
 from __future__ import annotations
 
 from pyspark.sql import DataFrame
@@ -107,9 +108,7 @@ def read_incremental(env: EnvConfig, entity: EntityConfig) -> DataFrame:
         if fmt in ("json", "csv"):
             static = static.option("inferSchema", "true")
         inferred = static.load(directory).schema
-        reader = spark.readStream.format(fmt).schema(inferred).option(
-            "maxFilesPerTrigger", "200"
-        )
+        reader = spark.readStream.format(fmt).schema(inferred).option("maxFilesPerTrigger", "200")
 
     for key, value in entity.source.options.items():
         reader = reader.option(key, value)

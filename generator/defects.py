@@ -9,6 +9,7 @@ Every injection is counted in ControlTotals.defects, so tests can assert that
 the pipeline caught exactly what was planted — not merely that it caught
 "some" bad rows.
 """
+
 from __future__ import annotations
 
 import copy
@@ -99,16 +100,21 @@ class DefectInjector:
                 # event_time moves backwards relative to arrival order. Batch
                 # dedup must order by event_time, not by file position.
                 t = datetime.fromisoformat(e["event_time"]) - timedelta(
-                    minutes=self.rng.randint(2, 45))
+                    minutes=self.rng.randint(2, 45)
+                )
                 e = dict(e, event_time=t.isoformat())
                 self.totals.defect("out_of_order_event")
             out.append(e)
             if self._hit("duplicate_event_id"):
                 # Same event_id, different ingest_time — an at-least-once
                 # delivery artefact. Dedup keeps exactly one.
-                dup = dict(e, ingest_time=(
-                    datetime.fromisoformat(e["ingest_time"])
-                    + timedelta(seconds=self.rng.randint(1, 120))).isoformat())
+                dup = dict(
+                    e,
+                    ingest_time=(
+                        datetime.fromisoformat(e["ingest_time"])
+                        + timedelta(seconds=self.rng.randint(1, 120))
+                    ).isoformat(),
+                )
                 out.append(dup)
                 self.totals.defect("duplicate_event_id")
         return out

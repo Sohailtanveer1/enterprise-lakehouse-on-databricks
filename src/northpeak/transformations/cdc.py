@@ -10,6 +10,7 @@ Deletes are **soft**. A hard delete would erase the row Gold's facts point at,
 so the fact would either break or silently drop. `is_deleted` lets Gold decide,
 and preserves the audit trail that a hard delete destroys.
 """
+
 from __future__ import annotations
 
 from delta.tables import DeltaTable
@@ -37,14 +38,10 @@ def ensure_target(df: DataFrame, table: str, entity: EntityConfig) -> None:
     if entity.cluster_by:
         # Liquid clustering adapts as query patterns change, without the
         # rewrite that changing a partition column requires.
-        get_spark().sql(
-            f"ALTER TABLE {table} CLUSTER BY ({', '.join(entity.cluster_by)})"
-        )
+        get_spark().sql(f"ALTER TABLE {table} CLUSTER BY ({', '.join(entity.cluster_by)})")
     # Change Data Feed lets Gold read only what changed instead of rebuilding
     # from the whole table. Must be enabled at creation to be useful.
-    get_spark().sql(
-        f"ALTER TABLE {table} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)"
-    )
+    get_spark().sql(f"ALTER TABLE {table} SET TBLPROPERTIES (delta.enableChangeDataFeed = true)")
     log.info(f"created silver table {table}")
 
 
@@ -57,7 +54,9 @@ def prepare(df: DataFrame, entity: EntityConfig) -> DataFrame:
         df.withColumn("is_deleted", F.col("_is_delete"))
         .withColumn(
             "deleted_at",
-            F.when(F.col("_is_delete"), F.current_timestamp()).otherwise(F.lit(None).cast("timestamp")),
+            F.when(F.col("_is_delete"), F.current_timestamp()).otherwise(
+                F.lit(None).cast("timestamp")
+            ),
         )
         .withColumn("_silver_updated_at", F.current_timestamp())
     )
@@ -120,7 +119,7 @@ def _last_operation_metrics(delta_table: DeltaTable) -> dict:
     try:
         row = delta_table.history(1).select("operationMetrics").collect()[0]
         return {k: int(v) for k, v in (row["operationMetrics"] or {}).items() if v.isdigit()}
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log.warning(f"could not read operation metrics: {exc}")
         return {}
 
@@ -133,7 +132,8 @@ def read_changes(env: EnvConfig, entity_name: str, since_version: int) -> DataFr
     """
     table = env.table("silver", entity_name)
     return (
-        get_spark().read.format("delta")
+        get_spark()
+        .read.format("delta")
         .option("readChangeFeed", "true")
         .option("startingVersion", since_version)
         .table(table)

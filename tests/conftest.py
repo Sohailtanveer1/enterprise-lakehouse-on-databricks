@@ -10,6 +10,7 @@ Tests that require a live Databricks workspace would never run in CI, so they
 stop being run at all. Everything here runs locally or is skipped with a
 reason, never silently passed.
 """
+
 from __future__ import annotations
 
 import shutil

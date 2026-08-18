@@ -15,6 +15,7 @@ filters the DataFrame once per rule; with 10 rules on the events table that is
 10 full scans, and it is the single easiest way to make a DQ framework the
 slowest part of the pipeline.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -82,8 +83,18 @@ def evaluate(
             # A rule that cannot bind must never be reported as passing.
             log.warning(f"[{entity}] rule '{rule.name}' skipped: columns absent")
             results.append(
-                dq_row(entity, layer, rule.name, rule.type, rule.severity.value,
-                       0, 0, False, "SKIPPED: target columns absent", env.name)
+                dq_row(
+                    entity,
+                    layer,
+                    rule.name,
+                    rule.type,
+                    rule.severity.value,
+                    0,
+                    0,
+                    False,
+                    "SKIPPED: target columns absent",
+                    env.name,
+                )
             )
             continue
         flagged = flagged.withColumn(f"{FLAG_PREFIX}{rule.name}", predicate)
@@ -105,9 +116,18 @@ def evaluate(
         for rule in row_rules:
             failed = int(counts[rule.name] or 0)
             results.append(
-                dq_row(entity, layer, rule.name, rule.type, rule.severity.value,
-                       rows_in, failed, failed == 0,
-                       f"{failed}/{rows_in} rows failed", env.name)
+                dq_row(
+                    entity,
+                    layer,
+                    rule.name,
+                    rule.type,
+                    rule.severity.value,
+                    rows_in,
+                    failed,
+                    failed == 0,
+                    f"{failed}/{rows_in} rows failed",
+                    env.name,
+                )
             )
             if rule.severity is Severity.FATAL and failed:
                 raise FatalDataQualityError(
@@ -120,8 +140,18 @@ def evaluate(
             continue
         violations, detail = _evaluate_batch_rule(rule, df, env, rows_in, trailing_mean)
         results.append(
-            dq_row(entity, layer, rule.name, rule.type, rule.severity.value,
-                   rows_in, violations, violations == 0, detail, env.name)
+            dq_row(
+                entity,
+                layer,
+                rule.name,
+                rule.type,
+                rule.severity.value,
+                rows_in,
+                violations,
+                violations == 0,
+                detail,
+                env.name,
+            )
         )
         if rule.severity is Severity.FATAL and violations:
             raise FatalDataQualityError(f"[{entity}] FATAL rule '{rule.name}': {detail}")
@@ -133,9 +163,11 @@ def evaluate(
     if warn_rules:
         flagged = flagged.withColumn(
             WARNINGS_COL,
-            F.array_compact(F.array(*[
-                F.when(~F.col(f"{FLAG_PREFIX}{r.name}"), F.lit(r.name)) for r in warn_rules
-            ])),
+            F.array_compact(
+                F.array(
+                    *[F.when(~F.col(f"{FLAG_PREFIX}{r.name}"), F.lit(r.name)) for r in warn_rules]
+                )
+            ),
         )
     else:
         flagged = flagged.withColumn(WARNINGS_COL, F.array().cast("array<string>"))
@@ -146,9 +178,11 @@ def evaluate(
             passes_all = passes_all & F.col(f"{FLAG_PREFIX}{rule.name}")
         flagged = flagged.withColumn(
             FAILED_RULES_COL,
-            F.array_compact(F.array(*[
-                F.when(~F.col(f"{FLAG_PREFIX}{r.name}"), F.lit(r.name)) for r in error_rules
-            ])),
+            F.array_compact(
+                F.array(
+                    *[F.when(~F.col(f"{FLAG_PREFIX}{r.name}"), F.lit(r.name)) for r in error_rules]
+                )
+            ),
         )
         valid = flagged.where(passes_all)
         quarantined = flagged.where(~passes_all)
@@ -177,7 +211,10 @@ def evaluate(
 
 
 def _evaluate_batch_rule(
-    rule: RuleConfig, df: DataFrame, env: EnvConfig, rows_in: int,
+    rule: RuleConfig,
+    df: DataFrame,
+    env: EnvConfig,
+    rows_in: int,
     trailing_mean: float | None,
 ) -> tuple[int, str]:
     if rule.type == "unique":
@@ -232,7 +269,8 @@ def trailing_mean_rows(env: EnvConfig, entity: str, days: int = 7) -> float | No
     if not table_exists(audit_table):
         return None
     row = (
-        get_spark().table(audit_table)
+        get_spark()
+        .table(audit_table)
         .where(
             (F.col("entity") == entity)
             & (F.col("status") == "SUCCESS")

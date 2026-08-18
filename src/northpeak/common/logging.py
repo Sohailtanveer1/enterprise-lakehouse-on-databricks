@@ -7,6 +7,7 @@ answer is archaeology.
 JSON output, never bare print(). Databricks captures stdout per task, and JSON
 lines are greppable and parseable where prose is not.
 """
+
 from __future__ import annotations
 
 import json
@@ -14,9 +15,10 @@ import logging
 import os
 import sys
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
-from typing import Any, Iterator
+from datetime import UTC, datetime
+from typing import Any
 
 _RUN_ID: str | None = None
 _CONTEXT: dict[str, Any] = {}
@@ -25,7 +27,7 @@ _CONTEXT: dict[str, Any] = {}
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
-            "ts": datetime.now(timezone.utc).isoformat(),
+            "ts": datetime.now(UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),

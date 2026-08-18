@@ -4,8 +4,10 @@ The generator is the ground truth for every reconciliation check, so a bug
 here produces false pipeline failures that cost hours to chase. These tests
 guard the properties the rest of the project assumes.
 """
+
 from __future__ import annotations
 
+import itertools
 import json
 from decimal import Decimal
 
@@ -108,8 +110,8 @@ def test_control_totals_exclude_cancelled_orders():
         if order["order_status"] == "CANCELLED":
             continue
         for item in items:
-            expected_net += (
-                money(item["unit_price"]) * item["quantity"] - money(item["discount_amount"])
+            expected_net += money(item["unit_price"]) * item["quantity"] - money(
+                item["discount_amount"]
             )
     assert g.totals.net_revenue == expected_net
 
@@ -127,8 +129,9 @@ def test_net_revenue_is_below_gross():
 def test_envelope_shape_matches_debezium():
     """Silver's unwrap keys off these exact field names."""
     row = {"order_id": "ORD-1", "order_status": "PLACED"}
-    env = debezium("u", "orders", before=row, after={**row, "order_status": "SHIPPED"},
-                   lsn=42, ts_ms=1)
+    env = debezium(
+        "u", "orders", before=row, after={**row, "order_status": "SHIPPED"}, lsn=42, ts_ms=1
+    )
     assert set(env) == {"op", "ts_ms", "before", "after", "source"}
     assert {"db", "schema", "table", "lsn", "ts_ms", "snapshot"} <= set(env["source"])
 
@@ -149,8 +152,9 @@ def test_mutations_are_never_no_ops():
     import random
 
     rows = [{"order_id": f"ORD-{i}", "order_status": "PLACED"} for i in range(300)]
-    events = mutation_stream(rows, "orders", random.Random(5), start_lsn=1,
-                             update_frac=1.0, delete_frac=0.0)
+    events = mutation_stream(
+        rows, "orders", random.Random(5), start_lsn=1, update_frac=1.0, delete_frac=0.0
+    )
     assert events, "expected mutations"
     for e in events:
         assert e["before"]["order_status"] != e["after"]["order_status"]
@@ -160,8 +164,9 @@ def test_deletes_emit_a_tombstone():
     import random
 
     rows = [{"order_id": f"ORD-{i}"} for i in range(200)]
-    events = mutation_stream(rows, "orders", random.Random(5), start_lsn=1,
-                             update_frac=0.0, delete_frac=1.0)
+    events = mutation_stream(
+        rows, "orders", random.Random(5), start_lsn=1, update_frac=0.0, delete_frac=1.0
+    )
     deletes = [e for e in events if e["op"] == "d" and not e.get("__tombstone")]
     tombstones = [e for e in events if e.get("__tombstone")]
     assert len(deletes) == len(tombstones) == len(rows)
@@ -172,11 +177,12 @@ def test_lsn_is_monotonic_and_non_contiguous():
     import random
 
     rows = [{"order_id": f"ORD-{i}", "order_status": "PLACED"} for i in range(100)]
-    events = mutation_stream(rows, "orders", random.Random(5), start_lsn=1000,
-                             update_frac=1.0, delete_frac=0.0)
+    events = mutation_stream(
+        rows, "orders", random.Random(5), start_lsn=1000, update_frac=1.0, delete_frac=0.0
+    )
     lsns = [e["source"]["lsn"] for e in events]
     assert lsns == sorted(lsns)
-    assert any(b - a > 1 for a, b in zip(lsns, lsns[1:]))
+    assert any(b - a > 1 for a, b in itertools.pairwise(lsns))
 
 
 # ------------------------------------------------------------ SCD2 source
@@ -232,8 +238,13 @@ def test_negative_quantities_are_injected_for_the_range_rule():
     g = Generator("small", seed=31)
     injector = DefectInjector(random.Random(2), g.totals, enabled=True)
     items = [
-        {"order_id": f"O{i}", "order_line_number": 1, "quantity": 2,
-         "unit_price": "10.00", "discount_amount": "0.00"}
+        {
+            "order_id": f"O{i}",
+            "order_line_number": 1,
+            "quantity": 2,
+            "unit_price": "10.00",
+            "discount_amount": "0.00",
+        }
         for i in range(2000)
     ]
     out = injector.order_items(items)

@@ -13,6 +13,7 @@ pipeline has.
 So every ordering here ends with a tiebreaker that is unique per row. The
 entity config supplies it: `order_by: [source_lsn, _ingest_ts, _record_hash]`.
 """
+
 from __future__ import annotations
 
 from pyspark.sql import DataFrame, Window
@@ -94,9 +95,11 @@ def dedup_report(df: DataFrame, entity: EntityConfig) -> dict:
     stats = df.agg(
         F.count("*").alias("total"),
         F.countDistinct(*[F.col(c) for c in entity.primary_key]).alias("distinct_keys"),
-        F.countDistinct(F.col(FALLBACK_TIEBREAKER)).alias("distinct_hashes")
-        if FALLBACK_TIEBREAKER in df.columns
-        else F.lit(None).alias("distinct_hashes"),
+        (
+            F.countDistinct(F.col(FALLBACK_TIEBREAKER)).alias("distinct_hashes")
+            if FALLBACK_TIEBREAKER in df.columns
+            else F.lit(None).alias("distinct_hashes")
+        ),
     ).collect()[0]
 
     total, keys = stats["total"], stats["distinct_keys"]

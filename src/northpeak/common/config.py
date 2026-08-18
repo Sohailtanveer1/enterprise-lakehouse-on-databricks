@@ -12,11 +12,12 @@ Three config kinds:
 Validated with pydantic on load. A typo in a config file should fail loudly at
 startup, not silently produce an empty DataFrame three tasks later.
 """
+
 from __future__ import annotations
 
 import os
 from enum import Enum
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 from typing import Any, Literal
 
@@ -263,7 +264,7 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
-@lru_cache(maxsize=None)
+@cache
 def load_env(env: str | None = None, config_root: str | None = None) -> EnvConfig:
     """Load environment config. Defaults to $NORTHPEAK_ENV, then 'local'."""
     env = env or os.environ.get("NORTHPEAK_ENV", "local")
@@ -278,7 +279,7 @@ def load_env(env: str | None = None, config_root: str | None = None) -> EnvConfi
     return cfg
 
 
-@lru_cache(maxsize=None)
+@cache
 def load_entity(name: str, config_root: str | None = None) -> EntityConfig:
     root = Path(config_root) if config_root else CONFIG_ROOT
     raw = _read_yaml(root / "entities" / f"{name}.yaml")
@@ -286,7 +287,7 @@ def load_entity(name: str, config_root: str | None = None) -> EntityConfig:
     return EntityConfig(**raw)
 
 
-@lru_cache(maxsize=None)
+@cache
 def load_quality(name: str, config_root: str | None = None) -> QualityConfig:
     """Load DQ rules. An entity with no rules file is valid — it just has none."""
     root = Path(config_root) if config_root else CONFIG_ROOT
@@ -302,8 +303,7 @@ def list_entities(config_root: str | None = None, active_only: bool = True) -> l
     """Every entity the framework knows about, sorted by name for determinism."""
     root = Path(config_root) if config_root else CONFIG_ROOT
     entities = [
-        load_entity(p.stem, config_root)
-        for p in sorted((root / "entities").glob("*.yaml"))
+        load_entity(p.stem, config_root) for p in sorted((root / "entities").glob("*.yaml"))
     ]
     return [e for e in entities if e.active] if active_only else entities
 
@@ -320,18 +320,18 @@ def validate_all(config_root: str | None = None) -> list[str]:
     for path in sorted((root / "env").glob("*.yaml")):
         try:
             load_env(path.stem, config_root)
-        except Exception as exc:  # noqa: BLE001 - reporting, not handling
+        except Exception as exc:
             errors.append(f"env/{path.name}: {exc}")
 
     for path in sorted((root / "entities").glob("*.yaml")):
         try:
             entity = load_entity(path.stem, config_root)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             errors.append(f"entities/{path.name}: {exc}")
             continue
         try:
             quality = load_quality(entity.name, config_root)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             errors.append(f"quality/{entity.name}.yaml: {exc}")
             continue
         # A rule referencing a column the entity excludes will never fire, which

@@ -3,6 +3,7 @@
 These run in CI with no JDK, which is the point: a config typo caught at merge
 is free, the same typo caught at 04:00 in a scheduled run is not.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -17,7 +18,6 @@ from northpeak.common.config import (
     SCDType,
     Severity,
     list_entities,
-    load_entity,
     load_env,
     load_quality,
     validate_all,
@@ -114,16 +114,25 @@ def test_partition_and_cluster_together_is_rejected():
 def test_inverted_dq_thresholds_are_rejected():
     with pytest.raises(ValidationError, match="below dq_warn_threshold"):
         EnvConfig(
-            name="x", catalog="c", landing_root="/l", checkpoint_root="/c",
-            schema_root="/s", dq_fail_threshold=0.99, dq_warn_threshold=0.90,
+            name="x",
+            catalog="c",
+            landing_root="/l",
+            checkpoint_root="/c",
+            schema_root="/s",
+            dq_fail_threshold=0.99,
+            dq_warn_threshold=0.90,
         )
 
 
 def test_local_env_without_warehouse_is_rejected():
     with pytest.raises(ValidationError, match="local_warehouse"):
         EnvConfig(
-            name="x", catalog="c", landing_root="/l", checkpoint_root="/c",
-            schema_root="/s", use_unity_catalog=False,
+            name="x",
+            catalog="c",
+            landing_root="/l",
+            checkpoint_root="/c",
+            schema_root="/s",
+            use_unity_catalog=False,
         )
 
 
@@ -158,13 +167,14 @@ def test_every_entity_has_a_fatal_primary_key_rule():
     for e in list_entities():
         rules = load_quality(e.name).rules
         pk_rules = [
-            r for r in rules
+            r
+            for r in rules
             if r.type in ("unique", "not_null") and set(r.columns) == set(e.primary_key)
         ]
         assert pk_rules, f"{e.name}: no rule covers the primary key {e.primary_key}"
-        assert any(r.severity is Severity.FATAL for r in pk_rules), (
-            f"{e.name}: primary key rules exist but none is FATAL"
-        )
+        assert any(
+            r.severity is Severity.FATAL for r in pk_rules
+        ), f"{e.name}: primary key rules exist but none is FATAL"
 
 
 def test_no_rule_targets_an_excluded_column():
@@ -179,9 +189,7 @@ def test_events_has_no_not_null_rule_on_customer_id():
     """~35% of sessions are anonymous. A not_null rule here would quarantine a
     third of the funnel and make conversion rate meaningless."""
     rules = load_quality("events").rules
-    offenders = [
-        r for r in rules if r.type == "not_null" and "customer_id" in r.columns
-    ]
+    offenders = [r for r in rules if r.type == "not_null" and "customer_id" in r.columns]
     assert not offenders, "anonymous sessions are legitimate, not a defect"
 
 
@@ -190,9 +198,9 @@ def test_cdc_entities_order_by_lsn_not_timestamp():
     updates. The LSN is the database's own total order."""
     for e in list_entities():
         if e.load_type is LoadType.CDC:
-            assert "source_lsn" in e.order_by[0], (
-                f"{e.name}: CDC must order by source_lsn first, got {e.order_by}"
-            )
+            assert (
+                "source_lsn" in e.order_by[0]
+            ), f"{e.name}: CDC must order by source_lsn first, got {e.order_by}"
 
 
 def test_scd2_entities_do_not_track_metadata_columns():

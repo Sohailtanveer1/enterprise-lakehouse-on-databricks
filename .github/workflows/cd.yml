@@ -1,0 +1,126 @@
+# CD — deploy Unity Catalog objects and Asset Bundles.
+#
+# Branch decides target, so a deploy cannot go to the wrong environment by
+# accident:
+#     develop    -> northpeak_dev
+#     release/*  -> northpeak_test
+#     main       -> northpeak_prod   (manual approval gate)
+#
+# AUTH, HONESTLY
+# Databricks recommends a service principal, never a personal token. Free
+# Edition has no account console, so service principals may be unavailable
+# (Spike 2). If they are, DATABRICKS_TOKEN below is a personal access token and
+# CI_CD.md says so plainly rather than implying otherwise. That is a stated
+# platform limitation, not a shortcut.
+name: CD
+
+on:
+  push:
+    branches: [main, develop, "release/**"]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Deployment target
+        required: true
+        type: choice
+        options: [dev, test, prod]
+
+# Never two deploys to one target at once — the second would race the first's
+# Terraform state. Not cancel-in-progress: killing a half-applied deploy is
+# worse than letting it finish.
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-target:
+    runs-on: ubuntu-latest
+    outputs:
+      target: ${{ steps.pick.outputs.target }}
+    steps:
+      - id: pick
+        run: |
+          if [ -n "${{ inputs.target }}" ]; then
+            echo "target=${{ inputs.target }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "target=prod" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.ref }}" == refs/heads/release/* ]]; then
+            echo "target=test" >> "$GITHUB_OUTPUT"
+          else
+            echo "target=dev" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy:
+    needs: resolve-target
+    runs-on: ubuntu-latest
+
+    # GitHub environment protection. `prod` requires a reviewer, configured in
+    # repo settings — the gate lives outside this file so a PR touching the
+    # workflow cannot remove it.
+    environment: ${{ needs.resolve-target.outputs.target }}
+
+    env:
+      TARGET: ${{ needs.resolve-target.outputs.target }}
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Install Databricks CLI
+        run: |
+          # Pinned. Databricks is migrating bundles to a Direct Deployment
+          # Engine through 2026; an unpinned client could change deployment
+          # behaviour without a commit to this repo.
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/v0.235.0/install.sh | sh
+          databricks --version
+
+      - name: Verify authentication
+        run: databricks current-user me
+
+      # ------------------------------------------------ 1. governance first
+      # Unity Catalog objects before jobs: a job that writes to a catalog which
+      # does not exist yet fails on its first run.
+      - name: Terraform plan
+        working-directory: terraform
+        run: |
+          terraform init
+          terraform plan -var-file="envs/${TARGET}.tfvars" -out=tfplan
+
+      - name: Terraform apply
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
+
+      # -------------------------------------------------- 2. code and jobs
+      - name: Deploy Asset Bundle
+        working-directory: bundle
+        run: |
+          databricks bundle validate -t "$TARGET"
+          databricks bundle deploy -t "$TARGET"
+
+      # ------------------------------------------------------ 3. smoke test
+      # Deploying successfully is not the same as working. This runs the
+      # pipeline on the small profile and fails the deploy if it breaks.
+      - name: Smoke test
+        if: env.TARGET != 'prod'
+        run: |
+          databricks bundle run northpeak_daily -t "$TARGET" --no-wait || {
+            echo "::error::smoke run failed to start"
+            exit 1
+          }
+
+      - name: Summary
+        run: |
+          {
+            echo "### Deployed to \`$TARGET\`"
+            echo ""
+            echo "| Item | Value |"
+            echo "|---|---|"
+            echo "| Commit | \`${GITHUB_SHA:0:8}\` |"
+            echo "| Ref | \`$GITHUB_REF_NAME\` |"
+            echo "| Catalog | \`northpeak_$TARGET\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

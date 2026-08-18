@@ -14,6 +14,7 @@ versions each the 64-bit collision probability is around 1e-7 — but "unlikely"
 is not "handled", so a FATAL uniqueness rule runs on every surrogate key
 column on every load. See config/quality/*.yaml.
 """
+
 from __future__ import annotations
 
 from pyspark.sql import Column
@@ -57,8 +58,9 @@ def versioned_surrogate_key(business_key: list[str], effective_start_col: str) -
     """
     if not business_key:
         raise ValueError("versioned_surrogate_key needs a business key")
-    parts = _norm(business_key) + [
-        F.coalesce(F.col(effective_start_col).cast("string"), F.lit("␀"))
+    parts = [
+        *_norm(business_key),
+        F.coalesce(F.col(effective_start_col).cast("string"), F.lit("␀")),
     ]
     return F.xxhash64(F.concat_ws(SEP, *parts))
 

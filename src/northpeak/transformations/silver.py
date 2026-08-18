@@ -18,6 +18,7 @@ of duplication rather than of data quality.
 Quality runs **before** apply on purpose. Merging first and validating after
 means bad rows are already in the target when you find out.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -116,8 +117,10 @@ def process_entity(env: EnvConfig, entity: EntityConfig) -> dict:
 
             rec.rows_out = outcome.rows_valid
             return {
-                "entity": entity.name, "status": "SUCCESS",
-                "rows_in": report["rows_in"], "rows_out": outcome.rows_valid,
+                "entity": entity.name,
+                "status": "SUCCESS",
+                "rows_in": report["rows_in"],
+                "rows_out": outcome.rows_valid,
                 "quarantined": outcome.rows_quarantined,
                 "duplicates_removed": report["key_duplicates"],
                 "pass_rate": outcome.pass_rate,
@@ -134,9 +137,20 @@ def run(env_name: str, entities: list[str] | None = None) -> list[dict]:
     # Sequential, and deliberately dependency-ordered. Referential-integrity
     # rules read the referenced Silver table, so customers must land before
     # orders or the check silently reports SKIPPED on every first run.
-    priority = {"categories": 0, "stores": 0, "promotions": 0, "customers": 1,
-                "products": 1, "orders": 2, "order_items": 3, "payments": 3,
-                "shipments": 3, "returns": 3, "inventory": 3, "events": 3}
+    priority = {
+        "categories": 0,
+        "stores": 0,
+        "promotions": 0,
+        "customers": 1,
+        "products": 1,
+        "orders": 2,
+        "order_items": 3,
+        "payments": 3,
+        "shipments": 3,
+        "returns": 3,
+        "inventory": 3,
+        "events": 3,
+    }
     selected.sort(key=lambda e: priority.get(e.name, 9))
 
     results = []
@@ -146,7 +160,7 @@ def run(env_name: str, entities: list[str] | None = None) -> list[dict]:
         except dq.FatalDataQualityError as exc:
             log.error(f"[{entity.name}] FATAL: {exc}")
             results.append({"entity": entity.name, "status": "FATAL_DQ", "error": str(exc)})
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.error(f"[{entity.name}] failed: {exc}", exc_info=True)
             results.append({"entity": entity.name, "status": "FAILED", "error": str(exc)[:400]})
     return results
@@ -161,9 +175,11 @@ def main(argv: list[str] | None = None) -> int:
     results = run(a.env, a.entity)
     print(f"\n{'entity':<16}{'status':<12}{'in':>9}{'out':>9}{'quar':>7}{'dupes':>8}")
     for r in results:
-        print(f"{r['entity']:<16}{r['status']:<12}{r.get('rows_in',0):>9,}"
-              f"{r.get('rows_out',0):>9,}{r.get('quarantined',0):>7,}"
-              f"{r.get('duplicates_removed',0):>8,}")
+        print(
+            f"{r['entity']:<16}{r['status']:<12}{r.get('rows_in',0):>9,}"
+            f"{r.get('rows_out',0):>9,}{r.get('quarantined',0):>7,}"
+            f"{r.get('duplicates_removed',0):>8,}"
+        )
     return 1 if any(r["status"] in ("FAILED", "FATAL_DQ") for r in results) else 0
 
 

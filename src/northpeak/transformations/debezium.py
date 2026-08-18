@@ -20,6 +20,7 @@ Three details that are easy to get wrong and each break CDC silently:
 3. `source.lsn` is the ordering key, not `ts_ms` and not the application's
    `updated_at`. It is the database's own total order over commits.
 """
+
 from __future__ import annotations
 
 from pyspark.sql import DataFrame
@@ -105,16 +106,16 @@ def before_after_diff(df: DataFrame, columns: list[str]) -> DataFrame:
     no-op the pipeline correctly ignores.
     """
     comparisons = [
-        F.when(
-            ~F.col(f"before.{c}").eqNullSafe(F.col(f"after.{c}")), F.lit(c)
-        ).otherwise(F.lit(None))
+        F.when(~F.col(f"before.{c}").eqNullSafe(F.col(f"after.{c}")), F.lit(c)).otherwise(
+            F.lit(None)
+        )
         for c in columns
     ]
     return df.withColumn(
         "_changed_columns",
-        F.when(
-            F.col("op") == OP_UPDATE, F.array_compact(F.array(*comparisons))
-        ).otherwise(F.array()),
+        F.when(F.col("op") == OP_UPDATE, F.array_compact(F.array(*comparisons))).otherwise(
+            F.array()
+        ),
     )
 
 

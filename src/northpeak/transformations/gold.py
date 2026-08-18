@@ -8,6 +8,7 @@ stage owns dim_date, the six facts, and the four aggregates.
 Order matters: dim_date and the conformed dimensions must exist before any
 fact resolves a surrogate key against them.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -57,7 +58,8 @@ def build_agg_daily_sales(env: EnvConfig) -> int:
             F.sum("net_amount").alias("net_revenue"),
             # AOV is computed here, once, so every dashboard reads the same
             # number rather than each recomputing its own definition.
-            (F.sum("net_amount") / F.countDistinct("order_id")).cast("decimal(18,2)")
+            (F.sum("net_amount") / F.countDistinct("order_id"))
+            .cast("decimal(18,2)")
             .alias("avg_order_value"),
         )
     )
@@ -70,7 +72,8 @@ def build_agg_customer_lifetime(env: EnvConfig) -> int:
     sales = spark.table(env.table("gold", "fact_sales"))
     dates = spark.table(env.table("gold", "dim_date"))
     customers = _dim(
-        env, "dim_customers",
+        env,
+        "dim_customers",
         ["customers_sk", "customer_id", "customer_segment", "region", "signup_date"],
         current_only=True,
     )
@@ -82,16 +85,13 @@ def build_agg_customer_lifetime(env: EnvConfig) -> int:
             F.countDistinct("order_id").alias("total_orders"),
             F.sum("net_amount").alias("lifetime_value"),
             (F.sum("net_amount") / F.countDistinct("order_id"))
-            .cast("decimal(18,2)").alias("avg_order_value"),
+            .cast("decimal(18,2)")
+            .alias("avg_order_value"),
             F.min("full_date").alias("first_order_date"),
             F.max("full_date").alias("last_order_date"),
         )
-        .withColumn(
-            "days_since_last_order", F.datediff(F.current_date(), F.col("last_order_date"))
-        )
-        .withColumn(
-            "is_repeat_customer", F.col("total_orders") > 1
-        )
+        .withColumn("days_since_last_order", F.datediff(F.current_date(), F.col("last_order_date")))
+        .withColumn("is_repeat_customer", F.col("total_orders") > 1)
     )
     df = per_customer.join(
         customers, per_customer.customer_sk == customers.customers_sk, "left"
@@ -113,8 +113,9 @@ def build_agg_customer_cohort(env: EnvConfig) -> int:
         .withColumn("order_month", F.date_format("full_date", "yyyy-MM"))
         .withColumn(
             "months_since_signup",
-            F.months_between(F.trunc("full_date", "month"), F.trunc("signup_date", "month"))
-            .cast("int"),
+            F.months_between(F.trunc("full_date", "month"), F.trunc("signup_date", "month")).cast(
+                "int"
+            ),
         )
         # Negative values mean an order predates the signup date - a data
         # problem, not a cohort. Excluded rather than silently skewing retention.
@@ -134,8 +135,12 @@ def build_agg_product_performance(env: EnvConfig) -> int:
     spark = get_spark()
     sales = spark.table(env.table("gold", "fact_sales"))
     dates = spark.table(env.table("gold", "dim_date"))
-    products = _dim(env, "dim_products", ["products_sk", "product_id", "product_name", "brand"],
-                    current_only=True)
+    products = _dim(
+        env,
+        "dim_products",
+        ["products_sk", "product_id", "product_name", "brand"],
+        current_only=True,
+    )
 
     base = (
         sales.join(dates, sales.order_date_sk == dates.date_sk, "left")
@@ -144,8 +149,9 @@ def build_agg_product_performance(env: EnvConfig) -> int:
             F.sum("quantity").alias("units_sold"),
             F.sum("net_amount").alias("net_revenue"),
             F.countDistinct("order_id").alias("orders"),
-            F.sum(F.when(F.col("promotion_sk") != -1, F.col("net_amount"))
-                  .otherwise(0)).alias("promo_revenue"),
+            F.sum(F.when(F.col("promotion_sk") != -1, F.col("net_amount")).otherwise(0)).alias(
+                "promo_revenue"
+            ),
         )
     )
 
@@ -165,8 +171,9 @@ def build_agg_product_performance(env: EnvConfig) -> int:
         base.fillna({"units_returned": 0})
         .withColumn(
             "return_rate",
-            F.when(F.col("units_sold") > 0,
-                   F.col("units_returned") / F.col("units_sold")).otherwise(F.lit(0.0)),
+            F.when(
+                F.col("units_sold") > 0, F.col("units_returned") / F.col("units_sold")
+            ).otherwise(F.lit(0.0)),
         )
         .join(products, base.product_sk == products.products_sk, "left")
         .drop("products_sk")
@@ -200,9 +207,7 @@ def _dim(env: EnvConfig, name: str, columns: list[str], current_only: bool = Fal
 
 def _write(env: EnvConfig, df, name: str) -> int:
     target = env.table("gold", name)
-    df.write.format("delta").mode("overwrite").option(
-        "overwriteSchema", "true"
-    ).saveAsTable(target)
+    df.write.format("delta").mode("overwrite").option("overwriteSchema", "true").saveAsTable(target)
     count = get_spark().table(target).count()
     log.info(f"{name}: {count:,} rows -> {target}")
     return count
@@ -232,13 +237,12 @@ def run(env_name: str, only: list[str] | None = None) -> list[dict]:
                 try:
                     with audit.audited_task(env, f"gold_{stage}", name, "gold") as rec:
                         rec.rows_out = builder(env)
-                        results.append(
-                            {"object": name, "rows": rec.rows_out, "status": "SUCCESS"}
-                        )
-                except Exception as exc:  # noqa: BLE001
+                        results.append({"object": name, "rows": rec.rows_out, "status": "SUCCESS"})
+                except Exception as exc:
                     log.error(f"{name} failed: {exc}", exc_info=True)
-                    results.append({"object": name, "rows": 0, "status": "FAILED",
-                                    "error": str(exc)[:300]})
+                    results.append(
+                        {"object": name, "rows": 0, "status": "FAILED", "error": str(exc)[:300]}
+                    )
     return results
 
 

@@ -16,11 +16,13 @@ Four checks, each catching a different loss mode:
     grain         a fact must not gain rows against its own grain
     control_total the generator's ground truth vs what Gold reports
 """
+
 from __future__ import annotations
 
+import json
+from datetime import UTC
 from decimal import Decimal
 from pathlib import Path
-import json
 
 from pyspark.sql import functions as F
 
@@ -36,20 +38,36 @@ COUNT_TOLERANCE = 0
 MONEY_TOLERANCE = Decimal("0.01")
 
 
-def _result(name: str, entity: str, src_layer: str, tgt_layer: str,
-            src_value, tgt_value, passed: bool, tolerance: str, env_name: str) -> dict:
-    from datetime import datetime, timezone
+def _result(
+    name: str,
+    entity: str,
+    src_layer: str,
+    tgt_layer: str,
+    src_value,
+    tgt_value,
+    passed: bool,
+    tolerance: str,
+    env_name: str,
+) -> dict:
+    from datetime import datetime
 
     return {
-        "run_id": get_run_id(), "check_name": name, "entity": entity,
-        "source_layer": src_layer, "target_layer": tgt_layer,
-        "source_value": str(src_value), "target_value": str(tgt_value),
+        "run_id": get_run_id(),
+        "check_name": name,
+        "entity": entity,
+        "source_layer": src_layer,
+        "target_layer": tgt_layer,
+        "source_value": str(src_value),
+        "target_value": str(tgt_value),
         "difference": str(
             (Decimal(str(src_value)) - Decimal(str(tgt_value)))
-            if _numeric(src_value) and _numeric(tgt_value) else "n/a"
+            if _numeric(src_value) and _numeric(tgt_value)
+            else "n/a"
         ),
-        "passed": passed, "tolerance": tolerance,
-        "evaluated_at": datetime.now(timezone.utc), "env": env_name,
+        "passed": passed,
+        "tolerance": tolerance,
+        "evaluated_at": datetime.now(UTC),
+        "env": env_name,
     }
 
 
@@ -57,7 +75,7 @@ def _numeric(v) -> bool:
     try:
         Decimal(str(v))
         return True
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
 
 
@@ -88,9 +106,17 @@ def check_row_flow(env: EnvConfig, entity: str) -> list[dict]:
     passed = accounted <= bronze_rows
 
     results = [
-        _result("row_flow_bronze_to_silver", entity, "bronze", "silver",
-                bronze_rows, accounted, passed,
-                "silver + quarantined <= bronze", env.name)
+        _result(
+            "row_flow_bronze_to_silver",
+            entity,
+            "bronze",
+            "silver",
+            bronze_rows,
+            accounted,
+            passed,
+            "silver + quarantined <= bronze",
+            env.name,
+        )
     ]
 
     if "is_deleted" in silver_df.columns:
@@ -98,9 +124,17 @@ def check_row_flow(env: EnvConfig, entity: str) -> list[dict]:
         # A source deleting a large share of its rows is an incident, not a
         # load. Surfaced rather than silently applied.
         results.append(
-            _result("soft_delete_rate", entity, "silver", "silver",
-                    silver_rows, deleted, deleted <= silver_rows * 0.25,
-                    "deleted <= 25% of rows", env.name)
+            _result(
+                "soft_delete_rate",
+                entity,
+                "silver",
+                "silver",
+                silver_rows,
+                deleted,
+                deleted <= silver_rows * 0.25,
+                "deleted <= 25% of rows",
+                env.name,
+            )
         )
     return results
 
@@ -122,29 +156,42 @@ def check_monetary(env: EnvConfig) -> list[dict]:
     # Comparing an unfiltered Silver against a filtered Gold produces a
     # "failure" that is really a definition mismatch — and chasing it wastes
     # an afternoon.
-    live_orders = spark.table(orders).where(
-        (~F.col("is_deleted")) & (F.col("order_status") != "CANCELLED")
-    ).select("order_id")
+    live_orders = (
+        spark.table(orders)
+        .where((~F.col("is_deleted")) & (F.col("order_status") != "CANCELLED"))
+        .select("order_id")
+    )
 
-    silver_net = (
-        spark.table(silver).where(~F.col("is_deleted"))
-        .join(live_orders, "order_id", "inner")
-        .agg(
-            F.sum(
-                F.col("unit_price").cast("decimal(18,2)") * F.col("quantity")
-                - F.col("discount_amount").cast("decimal(18,2)")
-            ).alias("net")
-        ).collect()[0]["net"] or Decimal("0.00")
+    silver_net = spark.table(silver).where(~F.col("is_deleted")).join(
+        live_orders, "order_id", "inner"
+    ).agg(
+        F.sum(
+            F.col("unit_price").cast("decimal(18,2)") * F.col("quantity")
+            - F.col("discount_amount").cast("decimal(18,2)")
+        ).alias("net")
+    ).collect()[
+        0
+    ][
+        "net"
+    ] or Decimal(
+        "0.00"
     )
-    gold_net = (
-        spark.table(gold).agg(F.sum("net_amount").alias("net")).collect()[0]["net"]
-        or Decimal("0.00")
-    )
+    gold_net = spark.table(gold).agg(F.sum("net_amount").alias("net")).collect()[0][
+        "net"
+    ] or Decimal("0.00")
     difference = abs(Decimal(str(silver_net)) - Decimal(str(gold_net)))
     return [
-        _result("net_revenue_silver_vs_gold", "fact_sales", "silver", "gold",
-                silver_net, gold_net, difference <= MONEY_TOLERANCE,
-                f"<= {MONEY_TOLERANCE}", env.name)
+        _result(
+            "net_revenue_silver_vs_gold",
+            "fact_sales",
+            "silver",
+            "gold",
+            silver_net,
+            gold_net,
+            difference <= MONEY_TOLERANCE,
+            f"<= {MONEY_TOLERANCE}",
+            env.name,
+        )
     ]
 
 
@@ -173,8 +220,17 @@ def check_fact_grain(env: EnvConfig) -> list[dict]:
         total = df.count()
         distinct = df.select(*keys).distinct().count()
         results.append(
-            _result("fact_grain", fact, "gold", "gold", total, distinct,
-                    total == distinct, "rows == distinct grain keys", env.name)
+            _result(
+                "fact_grain",
+                fact,
+                "gold",
+                "gold",
+                total,
+                distinct,
+                total == distinct,
+                "rows == distinct grain keys",
+                env.name,
+            )
         )
     return results
 
@@ -201,9 +257,17 @@ def check_control_totals(env: EnvConfig, control_totals_path: str | None) -> lis
         expected = Decimal(truth["net_revenue"])
         difference = abs(Decimal(str(actual or 0)) - expected)
         results.append(
-            _result("net_revenue_vs_control_total", "fact_sales", "generator", "gold",
-                    expected, actual, difference <= MONEY_TOLERANCE,
-                    f"<= {MONEY_TOLERANCE}", env.name)
+            _result(
+                "net_revenue_vs_control_total",
+                "fact_sales",
+                "generator",
+                "gold",
+                expected,
+                actual,
+                difference <= MONEY_TOLERANCE,
+                f"<= {MONEY_TOLERANCE}",
+                env.name,
+            )
         )
 
     for entity, expected_count in (truth.get("counts") or {}).items():
@@ -215,9 +279,17 @@ def check_control_totals(env: EnvConfig, control_totals_path: str | None) -> lis
         # duplicates collapse and quarantined rows are removed. It must never
         # hold MORE.
         results.append(
-            _result("row_count_vs_control_total", entity, "generator", "silver",
-                    expected_count, actual_count, actual_count <= expected_count,
-                    "silver <= generated", env.name)
+            _result(
+                "row_count_vs_control_total",
+                entity,
+                "generator",
+                "silver",
+                expected_count,
+                actual_count,
+                actual_count <= expected_count,
+                "silver <= generated",
+                env.name,
+            )
         )
     return results
 

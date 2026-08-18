@@ -20,6 +20,7 @@ union trick rather than two statements. Two statements would leave a window in
 which a key has zero current rows, and any Gold build in that window loses
 those rows entirely.
 """
+
 from __future__ import annotations
 
 from delta.tables import DeltaTable
@@ -60,7 +61,8 @@ def apply_scd1(
 
     condition = " AND ".join(f"t.{k} <=> s.{k}" for k in key)
     (
-        DeltaTable.forName(get_spark(), target).alias("t")
+        DeltaTable.forName(get_spark(), target)
+        .alias("t")
         .merge(source.alias("s"), condition)
         .whenMatchedUpdateAll()
         .whenNotMatchedInsertAll()
@@ -138,9 +140,8 @@ def apply_scd2(
     # carry the real key so they do match. One MERGE, one transaction, no
     # window in which a key has zero current versions.
     to_close = changed.withColumn("_merge_key", F.concat_ws("||", *[F.col(k) for k in key]))
-    to_insert = (
-        changed.unionByName(new_keys, allowMissingColumns=True)
-        .withColumn("_merge_key", F.lit(None).cast("string"))
+    to_insert = changed.unionByName(new_keys, allowMissingColumns=True).withColumn(
+        "_merge_key", F.lit(None).cast("string")
     )
     staged = to_close.unionByName(to_insert, allowMissingColumns=True)
 
@@ -148,9 +149,11 @@ def apply_scd2(
 
     (
         delta_table.alias("t")
-        .merge(staged.alias("s"), F.expr("s._merge_key IS NOT NULL").__and__(
-            target_key == F.col("s._merge_key")
-        ) & F.col(f"t.{IS_CURRENT}"))
+        .merge(
+            staged.alias("s"),
+            F.expr("s._merge_key IS NOT NULL").__and__(target_key == F.col("s._merge_key"))
+            & F.col(f"t.{IS_CURRENT}"),
+        )
         .whenMatchedUpdate(
             set={
                 # 1ms before the new version starts, so the ranges are a clean
@@ -192,8 +195,11 @@ def add_inferred_members(
         facts.select(F.col(business_key).alias("_bk"))
         .where(F.col("_bk").isNotNull())
         .distinct()
-        .join(dimension.select(F.col(business_key).alias("_dk")),
-              F.col("_bk") == F.col("_dk"), "left_anti")
+        .join(
+            dimension.select(F.col(business_key).alias("_dk")),
+            F.col("_bk") == F.col("_dk"),
+            "left_anti",
+        )
     )
     count = orphans.count()
     if count == 0:
@@ -210,9 +216,9 @@ def add_inferred_members(
     inferred = inferred.withColumn(
         sk_column, versioned_surrogate_key([business_key], EFFECTIVE_START)
     )
-    inferred.write.format("delta").mode("append").option(
-        "mergeSchema", "true"
-    ).saveAsTable(dimension_table)
+    inferred.write.format("delta").mode("append").option("mergeSchema", "true").saveAsTable(
+        dimension_table
+    )
 
     log.warning(f"[{entity_name}] inserted {count} inferred members into {dimension_table}")
     return count

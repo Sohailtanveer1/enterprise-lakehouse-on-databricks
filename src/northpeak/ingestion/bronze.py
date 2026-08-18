@@ -16,6 +16,7 @@ The metadata columns exist for concrete reasons, not for tidiness:
                   a bad row is found
   _record_hash    content fingerprint for exact-duplicate detection in Silver
 """
+
 from __future__ import annotations
 
 from pyspark.sql import DataFrame
@@ -28,8 +29,13 @@ from ..common.logging import get_logger, get_run_id
 log = get_logger(__name__)
 
 METADATA_COLUMNS = [
-    "_ingest_ts", "_ingest_date", "_source_system",
-    "_batch_id", "_run_id", "_file_name", "_record_hash",
+    "_ingest_ts",
+    "_ingest_date",
+    "_source_system",
+    "_batch_id",
+    "_run_id",
+    "_file_name",
+    "_record_hash",
 ]
 
 

@@ -35,8 +35,25 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "PTH", "RUF"]
 ignore = [
-    "E501",  # line length is handled by the formatter
+    "E501",   # line length is the formatter's job
+    # `from pyspark.sql import functions as F` is the universal PySpark
+    # convention. Renaming it to lowercase would make every transformation in
+    # this repo look unfamiliar to anyone who has written Spark before.
+    "N812",
+    # dict(a=1, b=2) over {"a": 1, "b": 2} in the generator: entity rows have
+    # 15+ fields and the kwargs form stays readable where a brace literal does
+    # not. A deliberate style choice, not an oversight.
+    "C408",
+    # StrEnum exists in 3.11+, but `class X(str, Enum)` has different __str__
+    # behaviour and these enum values are written into Delta tables. Not worth
+    # a subtle serialisation change for a style point.
+    "UP042",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests import fixtures and modules for their side effects, and assert on
+# values a linter reads as unused.
+"tests/*" = ["S101"]
 
 [tool.black]
 line-length = 100

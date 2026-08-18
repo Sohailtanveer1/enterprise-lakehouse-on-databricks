@@ -11,6 +11,7 @@ Everything Databricks-specific is funnelled through this module so the rest of
 the codebase never branches on environment. That is what lets the whole
 pipeline be developed and tested locally without spending Databricks quota.
 """
+
 from __future__ import annotations
 
 import os

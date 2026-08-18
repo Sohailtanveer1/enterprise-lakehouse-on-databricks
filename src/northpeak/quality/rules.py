@@ -14,6 +14,7 @@ Two kinds of rule, and the distinction matters:
 Quarantining a row for a batch-level failure makes no sense — if the row count
 is 40% below trend, no individual row is at fault.
 """
+
 from __future__ import annotations
 
 import re
@@ -76,9 +77,7 @@ def build_row_predicate(rule: RuleConfig, df: DataFrame) -> Column | None:
     if rule.type == "regex":
         predicate = F.lit(True)
         for c in columns:
-            predicate = predicate & (
-                F.col(c).isNull() | F.col(c).rlike(rule.pattern or ".*")
-            )
+            predicate = predicate & (F.col(c).isNull() | F.col(c).rlike(rule.pattern or ".*"))
         return predicate
 
     if rule.type == "expression":
@@ -92,9 +91,9 @@ def build_row_predicate(rule: RuleConfig, df: DataFrame) -> Column | None:
         predicate = F.lit(True)
         for c in columns:
             text = F.col(c).cast("string")
-            predicate = predicate & ~(
-                text.rlike(EMAIL_RE) | text.rlike(PHONE_RE)
-            ).eqNullSafe(F.lit(True))
+            predicate = predicate & ~(text.rlike(EMAIL_RE) | text.rlike(PHONE_RE)).eqNullSafe(
+                F.lit(True)
+            )
         return predicate
 
     return None
@@ -102,16 +101,10 @@ def build_row_predicate(rule: RuleConfig, df: DataFrame) -> Column | None:
 
 def evaluate_unique(df: DataFrame, columns: list[str]) -> tuple[int, str]:
     """Count keys appearing more than once. Returns (violations, detail)."""
-    dupes = (
-        df.groupBy(*columns)
-        .count()
-        .where(F.col("count") > 1)
-    )
+    dupes = df.groupBy(*columns).count().where(F.col("count") > 1)
     rows = dupes.limit(5).collect()
     violations = dupes.count()
-    sample = "; ".join(
-        ",".join(f"{c}={r[c]}" for c in columns) + f" x{r['count']}" for r in rows
-    )
+    sample = "; ".join(",".join(f"{c}={r[c]}" for c in columns) + f" x{r['count']}" for r in rows)
     return violations, f"duplicate keys: {sample}" if sample else "no duplicates"
 
 

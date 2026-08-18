@@ -17,6 +17,7 @@ genuinely bespoke handling can be given its own module. A framework that
 absorbs every exception becomes unreadable, and "when did you not use the
 framework?" is a fair interview question with a real answer.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -74,9 +75,7 @@ def run(
     ensure_namespaces(env)
     audit.ensure_audit_tables(env)
 
-    selected = (
-        [load_entity(name) for name in entities] if entities else list_entities()
-    )
+    selected = [load_entity(name) for name in entities] if entities else list_entities()
     if system:
         selected = [e for e in selected if e.source.system == system]
     if not selected:
@@ -121,7 +120,7 @@ def _safe(env: EnvConfig, entity: EntityConfig, batch_id: str) -> dict:
     """
     try:
         return ingest_entity(env, entity, batch_id)
-    except Exception as exc:  # noqa: BLE001 - deliberate per-entity isolation
+    except Exception as exc:
         log.error(f"[{entity.name}] ingestion failed: {exc}", exc_info=True)
         return {"entity": entity.name, "status": "FAILED", "error": str(exc)[:500]}
 
@@ -135,15 +134,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--sequential", action="store_true", help="disable fan-out")
     a = ap.parse_args(argv)
 
-    results = run(
-        a.env, a.entity, a.system, a.batch_id, parallel=not a.sequential
-    )
+    results = run(a.env, a.entity, a.system, a.batch_id, parallel=not a.sequential)
     failed = [r for r in results if r["status"] == "FAILED"]
 
     print(f"\n{'entity':<16}{'status':<10}{'rows':>10}  target")
     for r in sorted(results, key=lambda x: x["entity"]):
-        print(f"{r['entity']:<16}{r['status']:<10}{r.get('row_count', 0):>10,}  "
-              f"{r.get('target', '')}")
+        print(
+            f"{r['entity']:<16}{r['status']:<10}{r.get('row_count', 0):>10,}  "
+            f"{r.get('target', '')}"
+        )
     return 1 if failed else 0
 
 

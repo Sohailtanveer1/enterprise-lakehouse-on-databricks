@@ -17,6 +17,7 @@ The envelope is byte-compatible between the two, so no pipeline code knows
 which one produced it. That is what makes Debezium optional rather than
 load-bearing.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -26,10 +27,11 @@ import io
 import json
 import sys
 import uuid
-from datetime import date, datetime, timezone
+from collections.abc import Iterable
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from .defects import DefectInjector, summarise
 from .model import WINDOW_END, Generator
@@ -37,6 +39,7 @@ from .model import WINDOW_END, Generator
 try:  # optional: Parquet output
     import pyarrow as pa
     import pyarrow.parquet as pq
+
     HAVE_ARROW = True
 except ImportError:  # pragma: no cover
     HAVE_ARROW = False
@@ -69,11 +72,13 @@ class Landing:
         return p
 
     def _record(self, path: Path, rows: int) -> None:
-        self.manifest.append({
-            "path": str(path.relative_to(self.root)),
-            "rows": rows,
-            "bytes": path.stat().st_size,
-        })
+        self.manifest.append(
+            {
+                "path": str(path.relative_to(self.root)),
+                "rows": rows,
+                "bytes": path.stat().st_size,
+            }
+        )
 
     def json_lines(self, entity: str, rows: list[dict], dt: str, gzipped: bool = False) -> None:
         if not rows:
@@ -123,8 +128,9 @@ class Landing:
 # --------------------------------------------------------- Debezium envelope
 
 
-def debezium(op: str, table: str, before: dict | None, after: dict | None,
-             lsn: int, ts_ms: int) -> dict:
+def debezium(
+    op: str, table: str, before: dict | None, after: dict | None, lsn: int, ts_ms: int
+) -> dict:
     """Emit the Debezium envelope shape verbatim.
 
     Field names and nesting match `debezium/connect` with schemas disabled, so
@@ -138,28 +144,42 @@ def debezium(op: str, table: str, before: dict | None, after: dict | None,
         "before": before,
         "after": after,
         "source": {
-            "db": "northpeak", "schema": "erp", "table": table,
-            "lsn": lsn, "txId": lsn // 7 + 1, "ts_ms": ts_ms,
+            "db": "northpeak",
+            "schema": "erp",
+            "table": table,
+            "lsn": lsn,
+            "txId": lsn // 7 + 1,
+            "ts_ms": ts_ms,
             "snapshot": "true" if op == "r" else "false",
-            "connector": "postgresql", "name": "northpeak",
+            "connector": "postgresql",
+            "name": "northpeak",
         },
     }
 
 
-def envelope_stream(rows: Iterable[dict], table: str, start_lsn: int = 1_000_000,
-                    ) -> list[dict]:
+def envelope_stream(
+    rows: Iterable[dict],
+    table: str,
+    start_lsn: int = 1_000_000,
+) -> list[dict]:
     """Wrap generated rows as snapshot reads. LSN increments monotonically —
     it is the ordering key Silver dedups on, so it must be a total order."""
     out, lsn = [], start_lsn
     for r in rows:
         lsn += 7  # non-unit stride: nothing may assume LSNs are contiguous
-        ts = int(datetime.now(timezone.utc).timestamp() * 1000)
+        ts = int(datetime.now(UTC).timestamp() * 1000)
         out.append(debezium("r", table, None, r, lsn, ts))
     return out
 
 
-def mutation_stream(rows: list[dict], table: str, rng, start_lsn: int,
-                    update_frac: float = 0.05, delete_frac: float = 0.01) -> list[dict]:
+def mutation_stream(
+    rows: list[dict],
+    table: str,
+    rng,
+    start_lsn: int,
+    update_frac: float = 0.05,
+    delete_frac: float = 0.01,
+) -> list[dict]:
     """Post-snapshot updates and deletes, so the CDC path has real u and d
     events and not only the initial load."""
     out, lsn = [], start_lsn
@@ -168,25 +188,38 @@ def mutation_stream(rows: list[dict], table: str, rng, start_lsn: int,
         if roll >= update_frac + delete_frac:
             continue
         lsn += 7
-        ts = int(datetime.now(timezone.utc).timestamp() * 1000)
+        ts = int(datetime.now(UTC).timestamp() * 1000)
         if roll < delete_frac:
             out.append(debezium("d", table, r, None, lsn, ts))
             # Tombstone: null value keyed on the PK. Debezium emits one after
             # every delete and dropping it makes deletes unrecoverable.
-            out.append({"op": "d", "ts_ms": ts, "before": r, "after": None,
-                        "source": out[-1]["source"], "__tombstone": True})
+            out.append(
+                {
+                    "op": "d",
+                    "ts_ms": ts,
+                    "before": r,
+                    "after": None,
+                    "source": out[-1]["source"],
+                    "__tombstone": True,
+                }
+            )
         else:
             # A real diff, not a no-op. An update event whose before and after
             # are identical proves nothing: SCD2 change detection correctly
             # ignores it, so the test would pass while testing nothing.
             after = dict(r)
             cur = r.get("order_status")
-            advance = {"PLACED": "CONFIRMED", "CONFIRMED": "SHIPPED",
-                       "SHIPPED": "DELIVERED", "DELIVERED": "RETURNED"}
+            advance = {
+                "PLACED": "CONFIRMED",
+                "CONFIRMED": "SHIPPED",
+                "SHIPPED": "DELIVERED",
+                "DELIVERED": "RETURNED",
+            }
             after["order_status"] = advance.get(cur, "CONFIRMED")
             after["shipping_status"] = (
-                "DELIVERED" if after["order_status"] == "DELIVERED" else "IN_TRANSIT")
-            after["updated_at"] = datetime.now(timezone.utc).isoformat()
+                "DELIVERED" if after["order_status"] == "DELIVERED" else "IN_TRANSIT"
+            )
+            after["updated_at"] = datetime.now(UTC).isoformat()
             assert after["order_status"] != cur, "mutation must change something"
             out.append(debezium("u", table, r, after, lsn, ts))
     return out
@@ -206,18 +239,21 @@ def customer_scd2_changes(customers: list[dict], rng, frac: float = 0.04) -> lis
         if rng.random() >= frac:
             continue
         old_state = c.get("state")
-        new_region = rng.choice([r for r in STATES_BY_REGION
-                                 if old_state not in STATES_BY_REGION[r]])
+        new_region = rng.choice(
+            [r for r in STATES_BY_REGION if old_state not in STATES_BY_REGION[r]]
+        )
         new_state = rng.choice(STATES_BY_REGION[new_region])
-        changed.append(dict(
-            c,
-            state=new_state,
-            city=CITIES[new_state],
-            # A segment upgrade alongside the move, so the tracked-column set
-            # is exercised with more than one attribute at a time.
-            customer_segment=rng.choice(["PREMIUM", "WHOLESALE"]),
-            updated_at=datetime.now(timezone.utc).isoformat(),
-        ))
+        changed.append(
+            dict(
+                c,
+                state=new_state,
+                city=CITIES[new_state],
+                # A segment upgrade alongside the move, so the tracked-column set
+                # is exercised with more than one attribute at a time.
+                customer_segment=rng.choice(["PREMIUM", "WHOLESALE"]),
+                updated_at=datetime.now(UTC).isoformat(),
+            )
+        )
     return changed
 
 
@@ -266,8 +302,9 @@ def run(profile: str, out: Path, seed: int, inject: bool, days_inventory: int) -
     for name, rows in (("orders", orders), ("order_items", items), ("payments", payments)):
         env = envelope_stream(rows, name)
         if inject and name == "orders":
-            env += mutation_stream(orders[: max(1, len(orders) // 10)], name,
-                                   gen.rng, start_lsn=9_000_000)
+            env += mutation_stream(
+                orders[: max(1, len(orders) // 10)], name, gen.rng, start_lsn=9_000_000
+            )
         land.parquet(f"erp/{name}", env, today)
 
     ships, rets = gen.shipments_and_returns(orders)
@@ -293,16 +330,20 @@ def run(profile: str, out: Path, seed: int, inject: bool, days_inventory: int) -
     # only show up in production if they were never tested.
     if inject:
         land.json_lines("returns", inj.replay_batch(rets[:50]), today)
-        land.raw("shipments", inj.corrupt_file_content(
-            "\n".join(json.dumps(s, default=_json_default) for s in ships[:100])),
-            "2026-08-29")
+        land.raw(
+            "shipments",
+            inj.corrupt_file_content(
+                "\n".join(json.dumps(s, default=_json_default) for s in ships[:100])
+            ),
+            "2026-08-29",
+        )
 
     totals = gen.totals.to_dict()
     totals["defect_summary"] = summarise(gen.totals)
     totals["batch_id"] = batch
     totals["profile"] = profile
     totals["seed"] = seed
-    totals["generated_at"] = datetime.now(timezone.utc).isoformat()
+    totals["generated_at"] = datetime.now(UTC).isoformat()
     totals["files"] = land.manifest
 
     ct = out / "_control_totals" / f"control_totals-{batch}.json"
@@ -324,8 +365,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--profile", default="small", choices=["small", "medium", "large"])
     ap.add_argument("--out", default="./local_lake/landing", type=Path)
     ap.add_argument("--seed", type=int, default=20260818)
-    ap.add_argument("--no-defects", action="store_true",
-                    help="clean data only — for baseline comparison")
+    ap.add_argument(
+        "--no-defects", action="store_true", help="clean data only — for baseline comparison"
+    )
     ap.add_argument("--inventory-days", type=int, default=30)
     a = ap.parse_args(argv)
     run(a.profile, a.out, a.seed, not a.no_defects, a.inventory_days)
