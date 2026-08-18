@@ -3,7 +3,8 @@
 **Project:** Enterprise E-Commerce Lakehouse & Real-Time Analytics Platform (GCP + Databricks)
 **Author:** Sohail Tanveer
 **Date of assessment:** 2026-08-18
-**Status:** Phase 0 complete and validated — Phase 1 (Architecture) not started
+**Status:** Phase 0 complete and validated · Phase 1 complete (R2)
+**Revision:** R2 — scope narrowed to **batch only**; **Docker Desktop** source estate adopted
 
 **Confirmed environment constraints (2026-08-18):**
 
@@ -16,6 +17,11 @@
   Phase 2. The `e2-micro` VM (Postgres + SFTP), Pub/Sub, Cloud Run and Secret Manager are all
   comfortably affordable; the design still targets **$0 steady-state** so the project survives
   after the credit expires.
+
+> ⚠️ **Read §13 first.** Sections 1–12 record the original Phase 0 assessment and are kept as a
+> historical record. **R2 superseded parts of it**: scope is now batch only, and the source estate
+> moved from GCP compute (Cloud Run, `e2-micro`, Pub/Sub) into Docker Desktop. Where this document
+> and `ARCHITECTURE.md` disagree, `ARCHITECTURE.md` wins.
 
 > Everything below was verified against official Databricks / Google Cloud documentation on
 > 2026-08-18. Platform capabilities in this space change fast. Every claim is tagged with a
@@ -138,8 +144,8 @@ Legend: ✅ works on Free Edition · ⚠️ works with caveats · 🔶 must be s
 | UC Volumes (managed) | ✅ | Strong fallback landing zone if Spike 1 fails. | Free |
 | Delta Lake, MERGE, time travel, Change Data Feed | ✅ | Core; fully available. | Free |
 | Auto Loader (`cloudFiles`) | ⚠️ | **Directory listing mode** is the practical mode on serverless. File-notification mode needs Pub/Sub + UC service credentials + DBR 16.2+ — treat as *documented but not implemented*. | Free |
-| Structured Streaming | ⚠️ | Works, but **do not run continuously**. Use `Trigger.AvailableNow` or short `ProcessingTime` windows — an always-on stream will eat the daily quota and get the workspace suspended. | Free (quota) |
-| **Kafka** source | 🔶 | Outbound internet is allow-listed. A public Confluent Cloud broker will very likely be **blocked**. Simulate with Pub/Sub → GCS micro-batches or a Delta table as stream source; document the Kafka production design. | — |
+| Structured Streaming | ⚠️ *(R2: batch only)* | Used **only** via Auto Loader with `Trigger.AvailableNow` — incremental batch on the streaming engine. Watermarks, event-time windows and continuous execution are **out of scope**. | Free (quota) |
+| **Kafka** source | ✅ *(R2)* | No longer a Databricks concern. Kafka runs **locally in Docker** carrying Debezium CDC, and the sink lands Parquet in GCS. Databricks reads files, never a broker — so the outbound allow-list is irrelevant. **Kafka is now real, not simulated.** | Free |
 | Lakeflow Jobs (orchestration) | ⚠️ | **Max 5 concurrent tasks.** Design the DAG mostly sequential with narrow fan-out. Retries, parameters, dependencies and notifications all work. | Free (quota) |
 | Lakeflow Declarative Pipelines (ex-DLT / Spark Declarative Pipelines) | ⚠️ | **1 active pipeline per type.** Enough for one showcase pipeline with `EXPECT` expectations. Build the *main* pipeline in plain PySpark + Jobs so you are not boxed in. | Free (quota) |
 | Databricks SQL warehouse | ⚠️ | Exactly **one, 2X-Small**. Fine for dashboards over a Gold layer of a few million rows. Set aggressive auto-stop. | Free (quota) |
@@ -252,7 +258,6 @@ scale benchmark." Do not claim TB-scale.
 
 - GCS external location (pending Spike 1)
 - Cloud Run REST API as a genuine API source with pagination and auth
-- Pub/Sub → micro-batch streaming path with watermarks, event time, dedup, windowed aggregates
 - Databricks Asset Bundles as the deployment mechanism
 - One Lakeflow Declarative Pipeline with `EXPECT` expectations, to showcase the declarative style
 - Performance benchmark chapter with before/after numbers
@@ -267,10 +272,9 @@ scale benchmark." Do not claim TB-scale.
 
 ### SIMULATED — and clearly labelled as such in the repo
 
-- **Kafka** → Pub/Sub plus file micro-batches. Kafka design documented in `STREAMING.md` with the exact `readStream.format("kafka")` code you *would* run.
 - **Multi-environment DEV / TEST / PROD** → three catalogs (`ecom_dev`, `ecom_test`, `ecom_prod`) in one workspace plus environment-parameterised config. Real separation means separate workspaces: documented, not built.
 - **Multi-user RBAC** → service principals and groups; only one human identity exists.
-- **On-prem SQL Server** → Postgres producing CDC-style extract files.
+- **On-prem SQL Server** → **Docker Postgres 16 with Debezium WAL capture** (R2). This is now a *real* CDC implementation, not a simulation — the only simulated part is which RDBMS it is.
 - **Production alerting (PagerDuty and similar)** → job email notifications plus an audit table.
 
 Every simulation gets a `> **SIMULATED:**` callout in the docs explaining what production would do
@@ -311,7 +315,7 @@ so "GCP + Databricks" stays honest.
 | **4** | Bronze: config-driven ingestion framework + Auto Loader + metadata + idempotency | 2 sessions |
 | **5** | Silver: standardise, dedup, DQ, quarantine, CDC MERGE, SCD1 and SCD2 | 3 sessions |
 | **6** | Gold: dimensions, facts, surrogate keys, aggregates | 2 sessions |
-| **7** | Streaming: Pub/Sub → Bronze → Silver → real-time Gold; watermarks, dedup, windows | 2 sessions |
+| **7** | ~~Streaming~~ — **removed in R2.** Effort redirected to the Docker estate and local test coverage | — |
 | **8** | Lakeflow Jobs DAG, parameters, retries, alerts | 1 session |
 | **9** | Unity Catalog governance: catalogs, grants, PII tags, masks, lineage | 1 session |
 | **10** | Tests, audit, reconciliation, monitoring dashboard | 2 sessions |
@@ -402,3 +406,32 @@ Phase 1 is **design only** — no implementation code.
 - [Service principals for CI/CD (GCP)](https://docs.databricks.com/gcp/en/dev-tools/auth/service-principals)
 - [Databricks Terraform provider](https://registry.terraform.io/providers/Databricks/databricks/latest/docs)
 - [Databricks Community — Free Edition and external locations](https://community.databricks.com/t5/data-governance/if-use-databricks-free-version-not-free-trail-can-use-external/m-p/127421)
+
+
+---
+
+## 13. R2 amendment — batch only, Docker source estate
+
+Two decisions after Phase 1 changed the shape of the build. This section records them; the detail
+lives in `ARCHITECTURE.md` §1–§4 and `COST.md` §1.
+
+**Batch only.** The streaming path, Pub/Sub, watermarking and the `rt_*` marts are removed.
+Justified by portfolio context: `real-time-analytics-on-gcp` already demonstrates streaming.
+Auto Loader still runs on the Structured Streaming engine in incremental-batch mode, so
+checkpointing, exactly-once file handling and schema evolution all remain in scope — described
+accurately as *incremental batch*, never as a streaming SLA.
+
+**Docker Desktop available (16 GB Windows).** This resolved three things at once:
+
+| Phase 0 concern | R2 resolution |
+|---|---|
+| "Kafka must be simulated — outbound allow-list" | **Kafka is now real**, running locally, carrying Debezium CDC |
+| "CDC uses a synthetic `op` column" | **Real Debezium capture of the Postgres write-ahead log**, LSN-ordered |
+| "Free Edition daily quota limits iteration" | **Local Spark container** — most development consumes no Databricks quota at all |
+
+**Spike 1 is unchanged and still blocking.** The GCS external location question is independent of
+both decisions, and the fallback remains UC Volumes.
+
+**New risk introduced:** local resource exhaustion replaces cloud spend as the binding constraint —
+container RAM, Docker disk growth, and orphaned Debezium replication slots inflating the Postgres
+WAL. Tracked as traps 9–11 in `COST.md` §6.

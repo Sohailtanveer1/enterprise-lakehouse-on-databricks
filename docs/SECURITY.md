@@ -98,17 +98,28 @@ that fails the build.
 
 | Secret | Stored in | Consumed by |
 |---|---|---|
-| Commerce API bearer token | GCP Secret Manager | Cloud Run extractor |
-| Postgres connection string | GCP Secret Manager | CDC extract job |
+| Commerce API bearer token | GCP Secret Manager | `api-puller` extractor container |
+| Postgres credentials | Docker `.env` (gitignored) for local, GCP Secret Manager for the GCS upload leg | `debezium-connect`, `cdc-sink` |
 | GCP service account key (if unavoidable) | GCP Secret Manager | — prefer Workload Identity and no key at all |
 | Databricks service principal client secret | GitHub Actions encrypted secrets | CI/CD pipeline |
 | Databricks PAT (local dev only) | `~/.databrickscfg`, gitignored | Developer machine |
+
+**Docker secrets.** `docker/.env` holds local-only credentials (Postgres password, SFTP user, API
+token) and is **gitignored**. Only `docker/.env.example` is committed, with placeholder values and
+no real secret. Local container credentials are deliberately *not* production secrets — they exist
+so the estate is reproducible, and rotating them means editing one file.
+
+**The one Docker secret that is real:** the GCP service account key or ADC credentials the
+`cdc-sink` and extractor containers use to write to GCS. That is mounted read-only from the host's
+`gcloud` config, never baked into an image and never committed. Prefer `gcloud auth
+application-default login` on the host over a downloaded key file — a key file on disk is the most
+common way a GCP credential ends up in a Git history.
 
 **Rotation:** service principal secrets rotated at project milestones; documented as a 90-day
 policy in production.
 
 **What is deliberately *not* used:**
-- No `.env` files committed, ever — even with placeholder values, they normalise the pattern
+- No `.env` file committed, ever — only `.env.example` with placeholders, and `.env` in `.gitignore` from the first commit
 - No secrets in notebook cell output (a real leak vector — output is committed with the notebook)
 - No secrets in job parameters (visible in run history)
 - No long-lived personal access tokens for automation

@@ -1,6 +1,8 @@
 # Repository Structure
 
-**Phase:** 1 — decision and rationale. Directories are created as their phase begins, not upfront.
+**Phase:** 1 — decision and rationale · **Revision:** R2 (batch only, Docker source estate)
+
+Directories are created as their phase begins, not upfront.
 
 ---
 
@@ -17,7 +19,7 @@ enterprise-lakehouse-on-databricks/
 ├── docs/                              # ← all documentation lives here
 │   ├── PHASE0-FEASIBILITY.md          ✅
 │   ├── BUSINESS_REQUIREMENTS.md       ✅
-│   ├── ARCHITECTURE.md                ✅  incl. diagrams 1-6
+│   ├── ARCHITECTURE.md                ✅  incl. 7 diagrams
 │   ├── DATA_MODEL.md                  ✅
 │   ├── NON_FUNCTIONAL_REQUIREMENTS.md ✅
 │   ├── SECURITY.md                    ✅
@@ -26,7 +28,7 @@ enterprise-lakehouse-on-databricks/
 │   ├── INGESTION.md                   # Phase 4
 │   ├── CDC.md                         # Phase 5
 │   ├── DATA_QUALITY.md                # Phase 5
-│   ├── STREAMING.md                   # Phase 7
+│   ├── LOCAL_STACK.md                 # Phase 2 — Docker estate + Debezium runbook
 │   ├── GOVERNANCE.md                  # Phase 9
 │   ├── TESTING.md                     # Phase 10
 │   ├── OBSERVABILITY.md               # Phase 10
@@ -75,19 +77,32 @@ enterprise-lakehouse-on-databricks/
 │   │   ├── rules.py                   # rule primitives
 │   │   ├── engine.py                  # evaluation + severity routing
 │   │   └── quarantine.py
-│   ├── reconciliation/
-│   │   └── checks.py
-│   └── streaming/
-│       ├── events.py
-│       └── aggregations.py
+│   └── reconciliation/
+│       └── checks.py
 │
 ├── notebooks/                         # ← orchestration only, thin
-│   ├── bronze/  silver/  gold/  streaming/  ops/
+│   ├── bronze/  silver/  gold/  ops/
+│
+├── docker/                            # ← Phase 2, the local source estate
+│   ├── docker-compose.yml             # profiles: core · cdc · dev · test
+│   ├── .env.example                   # never commit the real .env
+│   ├── postgres/
+│   │   ├── Dockerfile                 # wal_level=logical for Debezium
+│   │   └── init/                      # DDL + seed
+│   ├── commerce-api/                  # FastAPI REST source
+│   ├── sftp/                          # PIM drop config
+│   ├── debezium/
+│   │   └── connectors/orders.json     # connector registration payload
+│   ├── cdc-sink/                      # Kafka → Parquet → GCS
+│   ├── file-gen/                      # WMS feeds + clickstream files
+│   └── spark-dev/
+│       └── Dockerfile                 # pyspark + delta-spark + JDK 17
 │
 ├── generator/                         # Phase 3 — synthetic data generator
 │   ├── generate.py                    # CLI: --profile small|medium|large
 │   ├── entities/
 │   ├── defects.py                     # deliberate DQ defect injection
+│   ├── debezium_emitter.py            # fallback: envelope without Kafka
 │   └── control_totals.py              # ground truth for reconciliation tests
 │
 ├── sql/
@@ -127,6 +142,8 @@ enterprise-lakehouse-on-databricks/
 | `sample_data/` | **`generator/`** | Committing sample data means committing files that go stale, bloat the repo and get silently edited. A generator with a fixed seed is reproducible, versioned, and produces any volume on demand. Small fixtures live in `tests/fixtures/`. |
 | `ci-cd/` | **`.github/workflows/` + `bundle/`** | GitHub Actions requires the conventional path. Bundle definitions are deployment artefacts, distinct from CI configuration. |
 | (not proposed) | **`bundle/` added** | Asset Bundles is the Databricks-recommended deployment mechanism for jobs and pipelines (ADR-07), and it needs its own root. |
+| (not proposed) | **`docker/` added** | R2 introduces a containerised source estate and a local Spark runtime. It is infrastructure for *producing and testing* data, distinct from `generator/` which produces the data itself and runs inside those containers. |
+| (not proposed) | **`streaming/` removed** | Scope is batch only (R2). No empty scaffold for work that will not happen. |
 | (not proposed) | **`terraform/reference-only/`** added | Free Edition cannot apply account-level Terraform. Rather than omit it, the code is written and clearly marked as never applied — it demonstrates the knowledge without pretending it ran. |
 
 ---
