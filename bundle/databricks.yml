@@ -1,0 +1,72 @@
+# Databricks Asset Bundle — deployment for jobs and code (ADR-07).
+#
+# Terraform owns the slow-moving Unity Catalog objects; this owns the
+# fast-moving project assets. Mixing them on one resource causes state fights.
+#
+#   databricks bundle validate -t dev
+#   databricks bundle deploy   -t dev
+#   databricks bundle run northpeak_daily -t dev
+#
+# NOTE: Databricks is migrating bundles to a Direct Deployment Engine and
+# deprecating the internal Terraform engine through 2026. Pin the CLI version
+# in CI so a client upgrade cannot silently change deployment behaviour.
+
+bundle:
+  name: northpeak-lakehouse
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: Unity Catalog catalog for this target
+  landing_root:
+    description: >-
+      Landing zone root. The single Spike-1 switch:
+      PASS -> gs://<bucket>/landing, FAIL -> /Volumes/<catalog>/landing/files
+  notification_email:
+    description: Where job failure alerts go
+    default: sohailtanveerforjobs@gmail.com
+  schedule_pause_status:
+    description: PAUSED or UNPAUSED. Dev is paused so a deploy does not start nightly runs.
+    default: PAUSED
+  cicd_service_principal:
+    description: Service principal that owns prod runs. See Spike 2 - if Free Edition
+      does not expose service principals, drop the prod run_as block and say so in CI_CD.md.
+    default: ""
+
+targets:
+  # Local development. `bundle deploy -t dev` writes to the developer's own
+  # workspace path, so two people never overwrite each other's jobs.
+  dev:
+    mode: development
+    default: true
+    variables:
+      catalog: northpeak_dev
+      landing_root: ${var.landing_root}
+      schedule_pause_status: PAUSED
+    workspace:
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+
+  test:
+    mode: production
+    variables:
+      catalog: northpeak_test
+      landing_root: ${var.landing_root}
+      schedule_pause_status: PAUSED
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+
+  prod:
+    mode: production
+    variables:
+      catalog: northpeak_prod
+      landing_root: ${var.landing_root}
+      schedule_pause_status: UNPAUSED
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    # No human has MODIFY on prod (SECURITY.md §6). Deployment is the service
+    # principal's job, and this is the control that prevents the most common
+    # serious incident: an ad-hoc fix run straight against production.
+    run_as:
+      service_principal_name: ${var.cicd_service_principal}

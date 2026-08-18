@@ -1,0 +1,188 @@
+# Lakeflow Jobs DAG — the daily batch pipeline.
+#
+# Shape is dictated by a real constraint: Free Edition allows a maximum of
+# 5 concurrent job tasks. Ingestion fans out to 4 task groups; everything
+# downstream is sequential.
+#
+# That is also correct design independently of the limit. Silver CDC on shared
+# dimensions must not race the facts that reference them, and reconciliation is
+# meaningless until Gold has finished writing.
+#
+#   ingest_reference ─┐
+#   ingest_commerce  ─┤
+#   ingest_erp       ─┼─> silver_transform -> gold_build -> reconcile -> optimize
+#   ingest_operations─┘
+
+resources:
+  jobs:
+    northpeak_daily:
+      name: "[${bundle.target}] NorthPeak daily batch"
+      description: >-
+        Bronze ingestion, Silver transformation with CDC and SCD, Gold star
+        schema, reconciliation and table maintenance.
+
+      # 04:00 UTC: after the overnight source extracts, before the 07:00
+      # freshness SLA in BUSINESS_REQUIREMENTS.md §4.
+      schedule:
+        quartz_cron_expression: "0 0 4 * * ?"
+        timezone_id: UTC
+        # Paused in dev so a developer deploy does not start running nightly
+        # jobs nobody asked for. Set per target rather than with an inline
+        # ternary: bundle interpolation does not reliably support conditionals,
+        # and the colon inside one breaks YAML parsing outright.
+        pause_status: ${var.schedule_pause_status}
+
+      # Overlapping runs would have two MERGEs writing the same Silver table.
+      # Delta would serialise them, but the second would operate on a stale
+      # read. One run at a time.
+      max_concurrent_runs: 1
+
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+        # SLA breach matters as much as failure: a job that succeeds at 09:00
+        # has still missed the 07:00 commitment.
+        on_duration_warning_threshold_exceeded:
+          - ${var.notification_email}
+      health:
+        rules:
+          - metric: RUN_DURATION_SECONDS
+            op: GREATER_THAN
+            value: 3600
+
+      parameters:
+        - name: env
+          default: ${bundle.target}
+
+      tasks:
+        # ---------------------------------------------- Bronze (parallel, 4)
+        - task_key: ingest_reference
+          description: Low-churn reference data. Must land before anything joins to it.
+          notebook_task:
+            notebook_path: ../../notebooks/bronze/ingest.py
+            base_parameters:
+              env: "{{job.parameters.env}}"
+              entities: "categories,stores,promotions"
+          max_retries: 2
+          min_retry_interval_millis: 30000
+
+        - task_key: ingest_commerce
+          notebook_task:
+            notebook_path: ../../notebooks/bronze/ingest.py
+            base_parameters:
+              env: "{{job.parameters.env}}"
+              entities: "customers,products"
+          max_retries: 2
+          min_retry_interval_millis: 30000
+
+        - task_key: ingest_erp
+          description: >-
+            Debezium CDC feeds. Retries matter here: Auto Loader's schema
+            evolution fails the stream once on a new column and succeeds on
+            restart, which is expected behaviour rather than an incident.
+          notebook_task:
+            notebook_path: ../../notebooks/bronze/ingest.py
+            base_parameters:
+              env: "{{job.parameters.env}}"
+              entities: "orders,order_items,payments"
+          max_retries: 3
+          min_retry_interval_millis: 30000
+
+        - task_key: ingest_operations
+          notebook_task:
+            notebook_path: ../../notebooks/bronze/ingest.py
+            base_parameters:
+              env: "{{job.parameters.env}}"
+              entities: "inventory,shipments,returns,events"
+          max_retries: 2
+          min_retry_interval_millis: 30000
+
+        # -------------------------------------------------------- Silver
+        - task_key: silver_transform
+          description: >-
+            Unwrap, standardise, dedup, data quality, CDC merge, SCD1/SCD2.
+            Sequential and dependency-ordered internally.
+          depends_on:
+            - task_key: ingest_reference
+            - task_key: ingest_commerce
+            - task_key: ingest_erp
+            - task_key: ingest_operations
+          notebook_task:
+            notebook_path: ../../notebooks/silver/transform.py
+            base_parameters:
+              env: "{{job.parameters.env}}"
+          # No retries. A FATAL data-quality breach is not transient, and
+          # retrying it three times only delays the alert.
+          max_retries: 0
+
+        # ---------------------------------------------------------- Gold
+        - task_key: gold_build
+          depends_on:
+            - task_key: silver_transform
+          notebook_task:
+            notebook_path: ../../notebooks/gold/build.py
+            base_parameters:
+              env: "{{job.parameters.env}}"
+          max_retries: 1
+
+        # ------------------------------------------------ Reconciliation
+        - task_key: reconcile
+          description: >-
+            Did we lose any rows? Runs after Gold because it compares the
+            layers against each other and against the generator's control
+            totals.
+          depends_on:
+            - task_key: gold_build
+          notebook_task:
+            notebook_path: ../../notebooks/ops/reconcile.py
+            base_parameters:
+              env: "{{job.parameters.env}}"
+          max_retries: 0
+
+        # -------------------------------------------------- Maintenance
+        - task_key: optimize
+          description: >-
+            OPTIMIZE and VACUUM. Runs even when reconciliation fails - the
+            data is already written, and leaving small files unaddressed makes
+            tomorrow's run slower for no benefit.
+          depends_on:
+            - task_key: reconcile
+              outcome: "*"
+          notebook_task:
+            notebook_path: ../../notebooks/ops/optimize.py
+            base_parameters:
+              env: "{{job.parameters.env}}"
+          max_retries: 1
+
+    # Separate job: full historical rebuild from Bronze. Manual trigger only.
+    # Kept apart from the daily job so a rebuild can never be scheduled by
+    # accident.
+    northpeak_full_rebuild:
+      name: "[${bundle.target}] NorthPeak full rebuild from Bronze"
+      max_concurrent_runs: 1
+      email_notifications:
+        on_failure:
+          - ${var.notification_email}
+      parameters:
+        - name: env
+          default: ${bundle.target}
+      tasks:
+        - task_key: silver_rebuild
+          notebook_task:
+            notebook_path: ../../notebooks/silver/transform.py
+            base_parameters:
+              env: "{{job.parameters.env}}"
+        - task_key: gold_rebuild
+          depends_on:
+            - task_key: silver_rebuild
+          notebook_task:
+            notebook_path: ../../notebooks/gold/build.py
+            base_parameters:
+              env: "{{job.parameters.env}}"
+        - task_key: reconcile
+          depends_on:
+            - task_key: gold_rebuild
+          notebook_task:
+            notebook_path: ../../notebooks/ops/reconcile.py
+            base_parameters:
+              env: "{{job.parameters.env}}"
