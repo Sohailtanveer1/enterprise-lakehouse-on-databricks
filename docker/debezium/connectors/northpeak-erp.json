@@ -1,0 +1,23 @@
+{
+  "name": "northpeak-erp-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "debezium",
+    "database.password": "REPLACED_AT_REGISTRATION",
+    "database.dbname": "northpeak",
+    "topic.prefix": "northpeak",
+    "schema.include.list": "erp",
+    "table.include.list": "erp.orders,erp.order_items,erp.payments",
+    "plugin.name": "pgoutput",
+    "publication.name": "northpeak_erp",
+    "publication.autocreate.mode": "disabled",
+    "slot.name": "northpeak_slot",
+    "snapshot.mode": "initial",
+    "decimal.handling.mode": "string",
+    "time.precision.mode": "connect",
+    "tombstones.on.delete": "true",
+    "heartbeat.interval.ms": "10000"
+  }
+}

@@ -28,7 +28,7 @@ enterprise-lakehouse-on-databricks/
 │   ├── INGESTION.md                   # Phase 4
 │   ├── CDC.md                         # Phase 5
 │   ├── DATA_QUALITY.md                # Phase 5
-│   ├── LOCAL_STACK.md                 # Phase 2 — Docker estate + Debezium runbook
+│   ├── PHASE2-SETUP.md                ✅  Docker + GCP + Databricks + spikes runbook
 │   ├── GOVERNANCE.md                  # Phase 9
 │   ├── TESTING.md                     # Phase 10
 │   ├── OBSERVABILITY.md               # Phase 10

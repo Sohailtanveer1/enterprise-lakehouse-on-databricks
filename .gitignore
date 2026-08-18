@@ -1,0 +1,56 @@
+# --- secrets: never commit ---
+.env
+docker/.env
+*.env
+!*.env.example
+**/service-account*.json
+**/credentials.json
+.databrickscfg
+*.pem
+*.key
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# --- spark / delta local warehouse ---
+spark-warehouse/
+metastore_db/
+derby.log
+_checkpoints/
+local_lake/
+
+# --- generated data (regenerate from seed, never commit) ---
+generator/output/
+data/
+*.parquet
+*.csv.gz
+
+# --- terraform ---
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+
+# --- databricks bundles ---
+.databricks/
+
+# --- notebooks: strip outputs before commit ---
+.ipynb_checkpoints/
+
+# --- os / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

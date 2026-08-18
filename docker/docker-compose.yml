@@ -1,0 +1,195 @@
+name: northpeak
+
+# Profiles keep RAM under control on a 16 GB machine.
+#   core  -> postgres, commerce-api, sftp            (~1.5 GB)  the usual working set
+#   cdc   -> + kafka, debezium-connect, cdc-sink     (~2.5 GB)  real WAL-based CDC
+#   dev   -> + spark-dev                             (~2-3 GB)  local Spark, tests
+#   test  -> + fake-gcs                              (~0.2 GB)  offline integration tests
+#
+#   docker compose --profile core up -d
+#   docker compose --profile core --profile cdc up -d
+#   docker compose --profile dev run --rm spark-dev pytest -q
+
+services:
+
+  # ---------------------------------------------------------------- Postgres
+  # Stands in for the on-premise ERP. wal_level=logical is what makes
+  # Debezium possible; without it the replication slot cannot be created.
+  postgres:
+    profiles: [core, cdc, dev]
+    build: ./postgres
+    container_name: np-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DEBEZIUM_USER: ${DEBEZIUM_USER}
+      DEBEZIUM_PASSWORD: ${DEBEZIUM_PASSWORD}
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_replication_slots=4
+      - -c
+      - max_wal_senders=4
+      # Caps WAL retained for a lagging/orphaned slot. Without this an
+      # abandoned Debezium slot will grow the WAL until the disk fills.
+      - -c
+      - max_slot_wal_keep_size=1GB
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ------------------------------------------------------------ Commerce API
+  # Paginated REST source with bearer auth and deliberate 500s, so the
+  # extractor has to implement real retry and pagination handling.
+  commerce-api:
+    profiles: [core, dev]
+    build: ./commerce-api
+    container_name: np-commerce-api
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      API_BEARER_TOKEN: ${API_BEARER_TOKEN}
+      API_ERROR_RATE: ${API_ERROR_RATE}
+    ports:
+      - "${API_PORT}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ------------------------------------------------------------------- SFTP
+  # PIM drop zone. Daily full-snapshot CSVs land in /home/pim/upload.
+  sftp:
+    profiles: [core, dev]
+    image: atmoz/sftp:alpine
+    container_name: np-sftp
+    command: ${SFTP_USER}:${SFTP_PASSWORD}:1001
+    ports:
+      - "${SFTP_PORT}:22"
+    volumes:
+      - sftpdata:/home/${SFTP_USER}/upload
+
+  # ------------------------------------------------------------------ Kafka
+  # KRaft mode: no ZooKeeper. Single broker is fine here and is called out
+  # as a single point of failure in NON_FUNCTIONAL_REQUIREMENTS.md §7.
+  kafka:
+    profiles: [cdc]
+    image: apache/kafka:3.8.1
+    container_name: np-kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_RETENTION_HOURS: ${KAFKA_LOG_RETENTION_HOURS}
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafkadata:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+
+  # -------------------------------------------------------- Debezium Connect
+  # Reads the Postgres WAL and publishes change events to Kafka.
+  # Register the connector with scripts/register_debezium.sh after startup.
+  debezium-connect:
+    profiles: [cdc]
+    image: debezium/connect:2.7
+    container_name: np-debezium
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: northpeak-connect
+      CONFIG_STORAGE_TOPIC: _connect_configs
+      OFFSET_STORAGE_TOPIC: _connect_offsets
+      STATUS_STORAGE_TOPIC: _connect_status
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      # Schemas off keeps the envelope readable and the payload small.
+      # Turn on if you later add a schema registry.
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+    ports:
+      - "${CONNECT_PORT}:8083"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+
+  # --------------------------------------------------------------- CDC sink
+  # Consumes Debezium topics, batches to Parquet, uploads to GCS.
+  # Built in Phase 4.
+  cdc-sink:
+    profiles: [cdc]
+    build: ./cdc-sink
+    container_name: np-cdc-sink
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+      GCS_BUCKET: ${GCS_BUCKET}
+      GCS_PREFIX: ${GCS_PREFIX}
+      GOOGLE_CLOUD_PROJECT: ${GCP_PROJECT_ID}
+      # Host ADC mounted read-only. Never bake a key into the image.
+      GOOGLE_APPLICATION_CREDENTIALS: /gcp/application_default_credentials.json
+    volumes:
+      - ${APPDATA}/gcloud/application_default_credentials.json:/gcp/application_default_credentials.json:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  # -------------------------------------------------------------- spark-dev
+  # Real JDK, real Spark, real Delta. This is where development and tests
+  # run so that Databricks quota is not consumed by iteration.
+  spark-dev:
+    profiles: [dev]
+    build: ./spark-dev
+    container_name: np-spark-dev
+    environment:
+      PYTHONPATH: /work/src
+      NORTHPEAK_ENV: local
+    volumes:
+      - ../:/work
+      - ivy-cache:/root/.ivy2
+    working_dir: /work
+    # Keep alive so you can exec into it; override with `run --rm` for one-offs.
+    command: ["sleep", "infinity"]
+
+  # -------------------------------------------------------------- fake GCS
+  # Offline GCS emulator for integration tests. Not used against real data.
+  fake-gcs:
+    profiles: [test]
+    image: fsouza/fake-gcs-server:latest
+    container_name: np-fake-gcs
+    command: ["-scheme", "http", "-port", "4443", "-public-host", "fake-gcs:4443"]
+    ports:
+      - "4443:4443"
+
+volumes:
+  pgdata:
+  sftpdata:
+  kafkadata:
+  ivy-cache:

@@ -1,0 +1,24 @@
+# Spark and Delta versions are coupled. delta-spark 3.2.x targets Spark 3.5.x.
+# If you change one, check the compatibility matrix at
+# https://docs.delta.io/latest/releases.html before changing the other.
+pyspark==3.5.3
+delta-spark==3.2.1
+
+# Config, validation, CLI
+pyyaml==6.0.2
+pydantic==2.9.2
+click==8.1.7
+
+# Cloud
+google-cloud-storage==2.18.2
+google-cloud-secret-manager==2.20.2
+
+# Source-system clients (used by extractors and tests)
+psycopg[binary]==3.2.3
+requests==2.32.3
+
+# Test + quality
+pytest==8.3.3
+pytest-cov==5.0.0
+ruff==0.7.4
+black==24.10.0
